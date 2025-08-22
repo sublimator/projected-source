@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "projected-source"
+version = "0.1.0"
+description = "Extract and project source code into documentation with tree-sitter"
+authors = [{name = "Nicholas Dudfield"}]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "tree-sitter>=0.20",
+    "tree-sitter-cpp>=0.23",
+    "jinja2>=3.0",
+    "click>=8.0",
+    "rich>=13.0",
+    "GitPython>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "ruff>=0.1",
+]
+
+[project.scripts]
+projected-source = "projected_source.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["projected_source*"]
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I"]

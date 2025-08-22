@@ -1,0 +1,31 @@
+# Test Documentation
+
+This demonstrates the `projected-source` package capabilities.
+
+## Extract Function by Name
+
+Here's the `calculate` function:
+
+{{ code('examples/example.cpp', function='calculate') }}
+
+## Extract Using Markers
+
+### Add Function
+{{ code('examples/example.cpp', marker='add_function') }}
+
+### Main Example
+{{ code('examples/example.cpp', marker='main_example') }}
+
+## Extract Line Range
+
+Here are lines 5-7:
+{{ code('examples/example.cpp', lines=(5, 7)) }}
+
+## Without GitHub Integration
+
+{{ code('examples/example.cpp', lines=(1, 3), github=False) }}
+
+## With Different Options
+
+### No Line Numbers
+{{ code('examples/example.cpp', marker='multiply_function', line_numbers=False) }}
