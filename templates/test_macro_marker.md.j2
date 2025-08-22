@@ -1,0 +1,13 @@
+# Test Macro + Marker Combination
+
+## Full DEFINE_JS_FUNCTION(example)
+
+{{ code('test_files/macro_example.cpp', function_macro={'name': 'DEFINE_JS_FUNCTION', 'arg0': 'example'}) }}
+
+## Just the 'validation' section from DEFINE_JS_FUNCTION(example)
+
+{{ code('test_files/macro_example.cpp', function_macro={'name': 'DEFINE_JS_FUNCTION', 'arg0': 'example'}, marker='validation') }}
+
+## Just the 'setup' section from DEFINE_JS_FUNCTION(example)  
+
+{{ code('test_files/macro_example.cpp', function_macro={'name': 'DEFINE_JS_FUNCTION', 'arg0': 'example'}, marker='setup') }}

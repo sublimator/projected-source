@@ -94,8 +94,14 @@ class TemplateRenderer:
                     macro_spec = {'name': function_macro}
                 else:
                     macro_spec = function_macro
-                code_text, start_line, end_line = extractor.extract_function_macro(file_path, macro_spec)
-                logger.info(f"Extracted function_macro '{macro_spec}' from {file_path}")
+                
+                # Check if we also have a marker - extract marker within macro
+                if marker:
+                    code_text, start_line, end_line = extractor.extract_function_macro_marker(file_path, macro_spec, marker)
+                    logger.info(f"Extracted marker '{marker}' from function_macro '{macro_spec}' in {file_path}")
+                else:
+                    code_text, start_line, end_line = extractor.extract_function_macro(file_path, macro_spec)
+                    logger.info(f"Extracted function_macro '{macro_spec}' from {file_path}")
             elif marker:
                 code_text, start_line, end_line = extractor.extract_marker(file_path, marker)
                 logger.info(f"Extracted marker '{marker}' from {file_path}")

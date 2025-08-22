@@ -12,6 +12,7 @@ from tree_sitter import Language, Node, Query, QueryCursor
 from ..core.extractor import BaseExtractor
 from .cpp_parser import SimpleCppParser
 from .macro_finder_v3 import MacroFinder
+from .macro_finder_nodes import MacroFinderWithNodes
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ class CppExtractor(BaseExtractor):
         super().__init__(Language(tscpp.language()))
         self.cpp_parser = SimpleCppParser()
         self.macro_finder = MacroFinder()
+        self.macro_finder_nodes = MacroFinderWithNodes()
     
     def extract_function(self, file_path: Path, function_name: str) -> Tuple[str, int, int]:
         """
@@ -125,6 +127,48 @@ class CppExtractor(BaseExtractor):
         
         logger.debug(f"Found {macro_name} at lines {start_line}-{end_line}")
         return full_text, start_line, end_line
+    
+    def extract_function_macro_marker(self, file_path: Path, macro_spec: Dict, marker: str) -> Tuple[str, int, int]:
+        """
+        Extract a marked section from within a function-defining macro.
+        
+        Args:
+            file_path: Path to the file
+            macro_spec: Dict with macro name and optional argument filters
+            marker: Marker name to extract
+            
+        Returns:
+            Tuple of (code_text, start_line, end_line)
+        """
+        source = file_path.read_bytes()
+        
+        macro_name = macro_spec.get('name')
+        if not macro_name:
+            raise ValueError("macro spec must include 'name'")
+        
+        # Build macro_args dict for filtering
+        macro_args = {}
+        for key, value in macro_spec.items():
+            if key.startswith('arg'):
+                macro_args[key] = value
+        
+        # Use the nodes version to find and extract
+        section_code = self.macro_finder_nodes.extract_macro_section(
+            source, macro_name, marker, macro_args if macro_args else None
+        )
+        
+        # Get line info for the section
+        info = self.macro_finder_nodes.find_markers_in_macro(
+            source, macro_name, macro_args if macro_args else None
+        )
+        
+        if marker not in info['markers']:
+            raise ValueError(f"Marker '{marker}' not found in macro")
+        
+        start_line, end_line = info['markers'][marker]
+        
+        logger.debug(f"Found marker '{marker}' in {macro_name} at lines {start_line}-{end_line}")
+        return section_code, start_line, end_line
     
     def find_class_or_namespace(self, file_path: Path, name: str) -> Optional[Node]:
         """
