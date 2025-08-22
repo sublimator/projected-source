@@ -5,9 +5,11 @@ Simplified C++ parser using tree-sitter for extracting functions.
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 from tree_sitter import Language, Parser
 import tree_sitter_cpp as tscpp
+
+from .extraction_result import ExtractionResult
 
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
@@ -21,37 +23,33 @@ class SimpleCppParser:
         self.language = Language(tscpp.language())
         self.parser = Parser(self.language)
     
-    def extract_function_by_name(self, source_code: bytes, function_name: str) -> Optional[str]:
+    def _find_node_by_qualified_name(self, source_code: bytes, target_name: str, node_types: list) -> Optional[object]:
         """
-        Extract a function by name from C++ source code.
-        Supports:
-        - Regular functions: "function_name"
-        - Class/struct methods: "ClassName::method_name"
-        - Namespace functions: "namespace::function_name"
-        - Nested namespaces: "ns1::ns2::function_name"
-        - Namespace + class: "namespace::ClassName::method_name"
+        Generic traversal to find a node by qualified name.
         
         Args:
             source_code: The C++ source code as bytes
-            function_name: Name of the function to extract (can include :: for class/namespace)
+            target_name: Qualified name to search for (e.g., "MyClass", "ns::MyClass", "MyClass::method")
+            node_types: List of node types to match (e.g., ["function_definition"] or ["class_specifier", "struct_specifier"])
             
         Returns:
-            The complete function source or None if not found
+            The matching tree-sitter node or None if not found
         """
         tree = self.parser.parse(source_code)
         root = tree.root_node
         
-        # Parse the function name - could be "func" or "Class::func" or "ns::Class::func"
-        parts = function_name.split("::")
-        method_name = parts[-1]
+        # Parse the target name - could be "name" or "Class::name" or "ns::Class::name"
+        parts = target_name.split("::")
+        target_leaf_name = parts[-1]
         qualifiers = parts[:-1] if len(parts) > 1 else []
         
-        logger.info(f"Searching for function: {function_name}")
-        logger.info(f"  Method name: {method_name}")
+        logger.info(f"Searching for: {target_name}")
+        logger.info(f"  Target name: {target_leaf_name}")
         logger.info(f"  Qualifiers: {qualifiers}")
+        logger.info(f"  Looking for node types: {node_types}")
         
-        # Walk the tree to find function definitions
-        def find_function(node, context_stack=None, depth=0):
+        # Walk the tree to find the target node
+        def find_node(node, context_stack=None, depth=0):
             if context_stack is None:
                 context_stack = []
             
@@ -83,7 +81,7 @@ class SimpleCppParser:
                 body = node.child_by_field_name("body")
                 if body and body.type == "declaration_list":
                     for decl in body.children:
-                        result = find_function(decl, new_context, depth + 1)
+                        result = find_node(decl, new_context, depth + 1)
                         if result:
                             return result
             
@@ -97,20 +95,35 @@ class SimpleCppParser:
                         break
                 
                 logger.debug(f"{indent}Found {node.type}: {class_name}")
+                
+                # Check if this is the struct/class we're looking for
+                if node.type in node_types and class_name == target_leaf_name:
+                    # Check if qualifiers match
+                    if not qualifiers:
+                        logger.info(f"{indent}  MATCH FOUND (no qualifiers required)")
+                        return node
+                    elif context_stack == qualifiers:
+                        logger.info(f"{indent}  MATCH FOUND (exact qualifier match)")
+                        return node
+                    elif len(context_stack) >= len(qualifiers):
+                        if context_stack[-len(qualifiers):] == qualifiers:
+                            logger.info(f"{indent}  MATCH FOUND (suffix qualifier match)")
+                            return node
+                
+                # Recurse into the class/struct body with updated context
                 if class_name:
-                    # Recurse into the class/struct body with updated context
                     new_context = context_stack + [class_name]
                     for child in node.children:
                         if child.type == "field_declaration_list":
                             logger.debug(f"{indent}  Searching field_declaration_list...")
                             for member in child.children:
                                 logger.debug(f"{indent}    Member type: {member.type}")
-                                result = find_function(member, new_context, depth + 1)
+                                result = find_node(member, new_context, depth + 1)
                                 if result:
                                     return result
             
             # Check for regular function definitions
-            elif node.type == "function_definition":
+            elif node.type == "function_definition" and "function_definition" in node_types:
                 logger.debug(f"{indent}Found function_definition")
                 # Try to find the function name
                 declarator = node.child_by_field_name("declarator")
@@ -180,8 +193,8 @@ class SimpleCppParser:
                             break
                     
                     # Check if this is the function we're looking for
-                    if found_name == method_name:
-                        logger.info(f"{indent}  Checking match: found_name={found_name}, method_name={method_name}")
+                    if found_name == target_leaf_name:
+                        logger.info(f"{indent}  Checking match: found_name={found_name}, target_name={target_leaf_name}")
                         logger.info(f"{indent}  Found qualifiers: {found_qualifiers}, Looking for: {qualifiers}")
                         # If no qualifiers requested, match any function with this name
                         if not qualifiers:
@@ -198,32 +211,90 @@ class SimpleCppParser:
                                 return node
                         logger.info(f"{indent}  No match - qualifiers don't match")
             
-            # Check for template functions
+            # Check for template declarations
             elif node.type == "template_declaration":
                 logger.debug(f"{indent}Found template_declaration")
                 # Look for function definition inside template
                 for child in node.children:
                     if child.type == "function_definition":
-                        result = find_function(child, context_stack, depth + 1)
+                        result = find_node(child, context_stack, depth + 1)
                         if result:
                             # Return the whole template declaration
                             return node
                     elif child.type in ["class_specifier", "struct_specifier"]:
-                        result = find_function(child, context_stack, depth + 1)
+                        result = find_node(child, context_stack, depth + 1)
                         if result:
                             return result
             
             # Recurse into children
             for child in node.children:
-                result = find_function(child, context_stack, depth + 1)
+                result = find_node(child, context_stack, depth + 1)
                 if result:
                     return result
             
             return None
         
-        function_node = find_function(root)
-        if function_node:
-            return function_node.text.decode('utf8')
+        return find_node(root)
+    
+    def extract_function_by_name(self, source_code: bytes, function_name: str) -> Optional[ExtractionResult]:
+        """
+        Extract a function by name from C++ source code.
+        Supports:
+        - Regular functions: "function_name"
+        - Class/struct methods: "ClassName::method_name"
+        - Namespace functions: "namespace::function_name"
+        - Nested namespaces: "ns1::ns2::function_name"
+        - Namespace + class: "namespace::ClassName::method_name"
+        
+        Args:
+            source_code: The C++ source code as bytes
+            function_name: Name of the function to extract (can include :: for class/namespace)
+            
+        Returns:
+            ExtractionResult with all the info, or None if not found
+        """
+        node = self._find_node_by_qualified_name(source_code, function_name, ["function_definition"])
+        if node:
+            return ExtractionResult(
+                text=node.text.decode('utf8'),
+                start_line=node.start_point.row + 1,  # 1-based for humans
+                end_line=node.end_point.row + 1,
+                start_column=node.start_point.column,
+                end_column=node.end_point.column,
+                node=node,
+                node_type=node.type,
+                qualified_name=function_name
+            )
+        return None
+    
+    def extract_struct_or_class_by_name(self, source_code: bytes, name: str) -> Optional[ExtractionResult]:
+        """
+        Extract a struct or class definition by name from C++ source code.
+        Supports:
+        - Simple structs/classes: "MyStruct" or "MyClass"
+        - Namespaced: "namespace::MyClass"
+        - Nested: "OuterClass::InnerClass"
+        - Multiple nesting: "ns::OuterClass::InnerStruct"
+        
+        Args:
+            source_code: The C++ source code as bytes
+            name: Name of the struct/class to extract (can include :: for namespace/nesting)
+            
+        Returns:
+            ExtractionResult with all the info, or None if not found
+        """
+        node = self._find_node_by_qualified_name(source_code, name, ["class_specifier", "struct_specifier"])
+        if node:
+            return ExtractionResult(
+                text=node.text.decode('utf8'),
+                start_line=node.start_point.row + 1,  # 1-based for humans
+                end_line=node.end_point.row + 1,
+                start_column=node.start_point.column,
+                end_column=node.end_point.column,
+                node=node,
+                node_type=node.type,
+                qualified_name=name
+            )
         return None
 
 

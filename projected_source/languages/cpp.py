@@ -12,6 +12,7 @@ from tree_sitter import Language, Node, Query, QueryCursor
 from ..core.extractor import BaseExtractor
 from .cpp_parser import SimpleCppParser
 from .macro_finder_v3 import MacroFinder
+from .macro_definition_finder import MacroDefinitionFinder
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ class CppExtractor(BaseExtractor):
         super().__init__(Language(tscpp.language()))
         self.cpp_parser = SimpleCppParser()
         self.macro_finder = MacroFinder()
+        self.macro_def_finder = MacroDefinitionFinder()
     
     def extract_function(self, file_path: Path, function_name: str) -> Tuple[str, int, int]:
         """
@@ -41,28 +43,44 @@ class CppExtractor(BaseExtractor):
         """
         source = file_path.read_bytes()
         
-        # Use the SimpleCppParser to extract function
-        func_text = self.cpp_parser.extract_function_by_name(source, function_name)
+        # Use the SimpleCppParser to extract function - returns ExtractionResult
+        result = self.cpp_parser.extract_function_by_name(source, function_name)
         
-        if not func_text:
+        if not result:
             raise ValueError(f"Function '{function_name}' not found in {file_path}")
         
-        # Calculate line numbers
-        # Find where this function appears in the source
-        func_start = source.find(func_text.encode('utf8'))
-        if func_start == -1:
-            # Shouldn't happen, but handle it
-            raise ValueError(f"Could not locate function '{function_name}' in source")
+        logger.debug(f"Found function '{function_name}' at {result.location}")
+        return result.to_tuple()  # For backwards compatibility
+    
+    def extract_struct(self, file_path: Path, struct_name: str) -> Tuple[str, int, int]:
+        """
+        Extract a C++ struct or class definition by name.
         
-        # Count lines up to the start
-        start_line = source[:func_start].count(b'\n') + 1
+        Supports:
+        - Simple structs/classes: "MyStruct" or "MyClass"
+        - Namespaced: "namespace::MyClass"
+        - Nested: "OuterClass::InnerClass"
         
-        # Count lines in the function
-        func_lines = func_text.count('\n')
-        end_line = start_line + func_lines
+        Args:
+            file_path: Path to the file
+            struct_name: Name of the struct/class (can include :: for namespace/nesting)
+            
+        Returns:
+            Tuple of (struct_text, start_line, end_line)
+            
+        Raises:
+            ValueError: If struct/class not found
+        """
+        source = file_path.read_bytes()
         
-        logger.debug(f"Found function '{function_name}' at lines {start_line}-{end_line}")
-        return func_text, start_line, end_line
+        # Use the SimpleCppParser to extract struct/class - returns ExtractionResult
+        result = self.cpp_parser.extract_struct_or_class_by_name(source, struct_name)
+        
+        if not result:
+            raise ValueError(f"Struct/class '{struct_name}' not found in {file_path}")
+        
+        logger.debug(f"Found struct/class '{struct_name}' at {result.location}")
+        return result.to_tuple()  # For backwards compatibility
     
     def extract_function_macro(self, file_path: Path, macro_spec: Dict) -> Tuple[str, int, int]:
         """
@@ -167,6 +185,28 @@ class CppExtractor(BaseExtractor):
         
         logger.debug(f"Found marker '{marker}' in {macro_name} at lines {start_line}-{end_line}")
         return section_code, start_line, end_line
+    
+    def extract_macro_definition(self, file_path: Path, macro_name: str) -> Tuple[str, int, int]:
+        """
+        Extract a C/C++ macro definition (#define statement).
+        
+        Args:
+            file_path: Path to the file
+            macro_name: Name of the macro to extract
+            
+        Returns:
+            Tuple of (macro_text, start_line, end_line)
+            
+        Raises:
+            ValueError: If macro definition not found
+        """
+        source = file_path.read_bytes()
+        
+        # Use the macro definition finder to extract
+        text, start_line, end_line = self.macro_def_finder.extract_definition_text(source, macro_name)
+        
+        logger.debug(f"Found macro definition '{macro_name}' at lines {start_line}-{end_line}")
+        return text, start_line, end_line
     
     def find_class_or_namespace(self, file_path: Path, name: str) -> Optional[Node]:
         """

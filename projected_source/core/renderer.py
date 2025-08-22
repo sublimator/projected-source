@@ -40,11 +40,16 @@ class TemplateRenderer:
         # Register custom functions
         self.env.globals['code'] = self._code_function
         self.env.globals['ghc'] = self._code_function  # Alias for compatibility
+        
+        # Load project-specific custom tags if available
+        # (loaded on-demand when rendering templates)
     
     def _code_function(self,
                       file_path: str,
                       function: str = None,
+                      struct: str = None,
                       function_macro: Union[str, Dict] = None,
+                      macro_definition: str = None,
                       lines: Tuple[int, int] = None,
                       marker: str = None,
                       github: bool = True,
@@ -57,7 +62,9 @@ class TemplateRenderer:
         Args:
             file_path: Path to the source file
             function: Function name to extract
+            struct: Struct/class name to extract (C/C++)
             function_macro: Macro that defines a function (dict with 'name' and optional 'arg0', 'arg1', etc)
+            macro_definition: Macro definition name to extract (#define statement)
             lines: Tuple of (start_line, end_line) to extract
             marker: Marker name to extract between //@@start and //@@end
             github: Include GitHub permalink (default: True)
@@ -102,6 +109,16 @@ class TemplateRenderer:
                 else:
                     code_text, start_line, end_line = extractor.extract_function_macro(file_path, macro_spec)
                     logger.info(f"Extracted function_macro '{macro_spec}' from {file_path}")
+            elif macro_definition:
+                code_text, start_line, end_line = extractor.extract_macro_definition(file_path, macro_definition)
+                logger.info(f"Extracted macro_definition '{macro_definition}' from {file_path}")
+            elif struct:
+                # Extract struct/class (for C/C++)
+                if hasattr(extractor, 'extract_struct'):
+                    code_text, start_line, end_line = extractor.extract_struct(file_path, struct)
+                    logger.info(f"Extracted struct/class '{struct}' from {file_path}")
+                else:
+                    return f"❌ **ERROR**: Struct extraction not supported for this file type"
             elif marker:
                 code_text, start_line, end_line = extractor.extract_marker(file_path, marker)
                 logger.info(f"Extracted marker '{marker}' from {file_path}")
@@ -110,7 +127,7 @@ class TemplateRenderer:
                 code_text, start_line, end_line = extractor.extract_lines(file_path, start_line, end_line)
                 logger.info(f"Extracted lines {start_line}-{end_line} from {file_path}")
             else:
-                return f"❌ **ERROR**: Must specify function, function_macro, lines, or marker for {file_path}"
+                return f"❌ **ERROR**: Must specify function, struct, function_macro, macro_definition, lines, or marker for {file_path}"
             
             # Build header with GitHub permalink if requested
             if github:
@@ -152,6 +169,72 @@ class TemplateRenderer:
             logger.error(f"Code extraction failed: {e}")
             return error_msg
     
+    def _find_custom_tags_file(self, start_path: Path) -> Optional[Path]:
+        """
+        Find .projected-source.py file by walking up from start_path.
+        Stops at git root to avoid escaping the repository.
+        
+        Args:
+            start_path: Path to start searching from (usually template dir)
+            
+        Returns:
+            Path to .projected-source.py if found, None otherwise
+        """
+        current = start_path.resolve()
+        
+        # Use repo_path as the boundary (it's already the git root)
+        git_root = self.repo_path
+        
+        while current >= git_root:
+            custom_file = current / '.projected-source.py'
+            if custom_file.exists():
+                logger.info(f"Found custom tags file at {custom_file}")
+                return custom_file
+            
+            # Move up one directory
+            parent = current.parent
+            if parent == current:  # Reached filesystem root
+                break
+            current = parent
+        
+        return None
+    
+    def _load_custom_tags(self, template_path: Path) -> None:
+        """
+        Load and execute custom tags from .projected-source.py if found.
+        
+        Args:
+            template_path: Path to the template being rendered
+        """
+        # Start searching from template's directory
+        start_dir = template_path.parent if template_path.is_file() else template_path
+        
+        custom_file = self._find_custom_tags_file(start_dir)
+        if not custom_file:
+            return
+        
+        try:
+            # Import the module dynamically
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("custom_tags", custom_file)
+            if not spec or not spec.loader:
+                logger.warning(f"Could not load {custom_file}")
+                return
+                
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            
+            # Look for setup_custom_tags function
+            if hasattr(module, 'setup_custom_tags'):
+                module.setup_custom_tags(self.env, self)
+                logger.info(f"Loaded custom tags from {custom_file}")
+            else:
+                logger.warning(f"{custom_file} missing setup_custom_tags function")
+                
+        except Exception as e:
+            logger.error(f"Error loading custom tags from {custom_file}: {e}")
+            # Don't crash - just continue without custom tags
+    
     def _add_line_numbers(self, code_text: str, start_line: int) -> str:
         """Add line numbers to code text."""
         lines = code_text.splitlines()
@@ -175,6 +258,10 @@ class TemplateRenderer:
             Rendered template as string
         """
         try:
+            # Load custom tags from .projected-source.py if available
+            template_path = self.template_dir / template_name
+            self._load_custom_tags(template_path)
+            
             template = self.env.get_template(template_name)
             return template.render(**context)
         except jinja2.TemplateNotFound:
