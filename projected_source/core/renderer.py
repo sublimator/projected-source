@@ -4,7 +4,7 @@ Jinja2 template rendering with code extraction functions.
 
 import logging
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 
 import jinja2
 
@@ -44,6 +44,7 @@ class TemplateRenderer:
     def _code_function(self,
                       file_path: str,
                       function: str = None,
+                      function_macro: Union[str, Dict] = None,
                       lines: Tuple[int, int] = None,
                       marker: str = None,
                       github: bool = True,
@@ -56,6 +57,7 @@ class TemplateRenderer:
         Args:
             file_path: Path to the source file
             function: Function name to extract
+            function_macro: Macro that defines a function (dict with 'name' and optional 'arg0', 'arg1', etc)
             lines: Tuple of (start_line, end_line) to extract
             marker: Marker name to extract between //@@start and //@@end
             github: Include GitHub permalink (default: True)
@@ -85,6 +87,15 @@ class TemplateRenderer:
             if function:
                 code_text, start_line, end_line = extractor.extract_function(file_path, function)
                 logger.info(f"Extracted function '{function}' from {file_path}")
+            elif function_macro:
+                # Handle function_macro parameter
+                if isinstance(function_macro, str):
+                    # Simple string -> convert to dict
+                    macro_spec = {'name': function_macro}
+                else:
+                    macro_spec = function_macro
+                code_text, start_line, end_line = extractor.extract_function_macro(file_path, macro_spec)
+                logger.info(f"Extracted function_macro '{macro_spec}' from {file_path}")
             elif marker:
                 code_text, start_line, end_line = extractor.extract_marker(file_path, marker)
                 logger.info(f"Extracted marker '{marker}' from {file_path}")
@@ -93,7 +104,7 @@ class TemplateRenderer:
                 code_text, start_line, end_line = extractor.extract_lines(file_path, start_line, end_line)
                 logger.info(f"Extracted lines {start_line}-{end_line} from {file_path}")
             else:
-                return f"❌ **ERROR**: Must specify function, lines, or marker for {file_path}"
+                return f"❌ **ERROR**: Must specify function, function_macro, lines, or marker for {file_path}"
             
             # Build header with GitHub permalink if requested
             if github:

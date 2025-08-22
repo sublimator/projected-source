@@ -1,0 +1,17 @@
+# Function Macro Test
+
+Testing the new `function_macro` parameter with applyHook.cpp.
+
+## Extract the 'accept' function
+
+Using function_macro to extract DEFINE_JS_FUNCTION with arg1='accept':
+
+{{ code('examples/applyHook.cpp', function_macro={'name': 'DEFINE_JS_FUNCTION', 'arg1': 'accept'}) }}
+
+## Extract the 'state_set' function
+
+{{ code('examples/applyHook.cpp', function_macro={'name': 'DEFINE_JS_FUNCTION', 'arg1': 'state_set'}) }}
+
+## Extract the 'trace' function
+
+{{ code('examples/applyHook.cpp', function_macro={'name': 'DEFINE_JS_FUNCTION', 'arg1': 'trace'}) }}
