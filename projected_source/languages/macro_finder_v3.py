@@ -7,7 +7,7 @@ Version 3: Ultra-DRY implementation with TypedDict and modern patterns.
 import logging
 from enum import Enum
 from functools import lru_cache
-from typing import List, Optional, Callable, TypedDict, Tuple
+from typing import List, Optional, Callable, TypedDict, Tuple, Dict, Any
 from tree_sitter import Language, Parser, Query, QueryCursor, Node, Tree
 import tree_sitter_cpp as tscpp
 
@@ -28,6 +28,8 @@ class MacroResult(TypedDict):
     end_point: Point
     line: int
     type: Optional[str]  # 'call' or 'definition'
+    node: Optional[Node]  # The actual tree-sitter node
+    args_node: Optional[Node]  # The arguments node
 
 
 class PredicateType(Enum):
@@ -196,7 +198,9 @@ class MacroFinder:
             start_point=(macro_node.start_point.row, macro_node.start_point.column),
             end_point=(macro_node.end_point.row, macro_node.end_point.column),
             line=macro_node.start_point.row + 1,
-            type=node_type
+            type=node_type,
+            node=macro_node,
+            args_node=args_node
         )
     
     def _extract_text(self, node: Node, full_body: bool = False) -> str:
@@ -282,6 +286,120 @@ class MacroFinder:
                         return self._build_result(node, params_node, func_id)
         
         return None
+    
+    def find_markers_in_node(self, node: Node) -> Dict[str, Tuple[int, int]]:
+        """Find comment markers within a node."""
+        markers = {}
+        
+        # Query for comments
+        comment_query = Query(self.language, '(comment) @comment')
+        cursor = QueryCursor(comment_query)
+        matches = cursor.matches(node)
+        
+        current_marker = None
+        start_line = None
+        
+        for _, captures in matches:
+            for comment_node in captures.get('comment', []):
+                text = comment_node.text.decode('utf8')
+                
+                # Check for start marker
+                if '//@@start' in text:
+                    parts = text.split('//@@start')
+                    if len(parts) > 1:
+                        marker_name = parts[1].strip()
+                        current_marker = marker_name
+                        start_line = comment_node.start_point.row + 1
+                
+                # Check for end marker
+                elif '//@@end' in text and current_marker:
+                    parts = text.split('//@@end')
+                    if len(parts) > 1:
+                        end_marker = parts[1].strip()
+                        if end_marker == current_marker:
+                            end_line = comment_node.start_point.row + 1
+                            markers[current_marker] = (start_line, end_line)
+                            current_marker = None
+                            start_line = None
+        
+        return markers
+    
+    def find_markers_in_macro(self, source: bytes, name: str, 
+                             arg_filters: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """
+        Find a macro and extract markers within it.
+        
+        Returns dict with:
+        - 'macro': The macro info
+        - 'markers': Dict of marker_name -> (start_line, end_line) within the macro
+        """
+        results = self.find_by_name(source, name)
+        
+        # Filter by arguments if specified
+        if arg_filters:
+            filtered = []
+            for r in results:
+                match = True
+                for key, value in arg_filters.items():
+                    if key.startswith('arg'):
+                        pos = int(key[3:])
+                        if pos >= len(r['arguments']) or r['arguments'][pos].strip() != value:
+                            match = False
+                            break
+                if match:
+                    filtered.append(r)
+            results = filtered
+        
+        if not results:
+            raise ValueError(f"Macro {name} not found")
+        if len(results) > 1:
+            raise ValueError(f"Multiple macros found, be more specific")
+        
+        result = results[0]
+        
+        # Now find markers within this node
+        markers = self.find_markers_in_node(result['node'])
+        
+        return {
+            'macro': result,
+            'markers': markers
+        }
+    
+    def extract_macro_section(self, source: bytes, macro_name: str,
+                             marker_name: str, arg_filters: Optional[Dict[str, str]] = None) -> str:
+        """
+        Extract a specific marked section from within a macro.
+        
+        Args:
+            source: Source code bytes
+            macro_name: Name of the macro to find
+            marker_name: Name of the marker section to extract
+            arg_filters: Optional dict to filter by macro arguments (e.g. {'arg0': 'value'})
+            
+        Returns:
+            The code between the markers
+        """
+        info = self.find_markers_in_macro(source, macro_name, arg_filters)
+        
+        if marker_name not in info['markers']:
+            available = ', '.join(info['markers'].keys())
+            raise ValueError(f"Marker '{marker_name}' not found. Available: {available}")
+        
+        start_line, end_line = info['markers'][marker_name]
+        
+        # Convert to source-relative lines
+        lines = source.decode('utf8').splitlines()
+        
+        # Extract the marked section
+        section_lines = lines[start_line-1:end_line]
+        
+        # Remove the marker comments themselves
+        if section_lines and '//@@start' in section_lines[0]:
+            section_lines = section_lines[1:]
+        if section_lines and '//@@end' in section_lines[-1]:
+            section_lines = section_lines[:-1]
+        
+        return '\n'.join(section_lines)
     
     # ==================== Context Manager Support ====================
     

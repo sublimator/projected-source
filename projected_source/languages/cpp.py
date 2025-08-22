@@ -12,7 +12,6 @@ from tree_sitter import Language, Node, Query, QueryCursor
 from ..core.extractor import BaseExtractor
 from .cpp_parser import SimpleCppParser
 from .macro_finder_v3 import MacroFinder
-from .macro_finder_nodes import MacroFinderWithNodes
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,6 @@ class CppExtractor(BaseExtractor):
         super().__init__(Language(tscpp.language()))
         self.cpp_parser = SimpleCppParser()
         self.macro_finder = MacroFinder()
-        self.macro_finder_nodes = MacroFinderWithNodes()
     
     def extract_function(self, file_path: Path, function_name: str) -> Tuple[str, int, int]:
         """
@@ -152,13 +150,13 @@ class CppExtractor(BaseExtractor):
             if key.startswith('arg'):
                 macro_args[key] = value
         
-        # Use the nodes version to find and extract
-        section_code = self.macro_finder_nodes.extract_macro_section(
+        # Use the unified macro_finder to find and extract
+        section_code = self.macro_finder.extract_macro_section(
             source, macro_name, marker, macro_args if macro_args else None
         )
         
         # Get line info for the section
-        info = self.macro_finder_nodes.find_markers_in_macro(
+        info = self.macro_finder.find_markers_in_macro(
             source, macro_name, macro_args if macro_args else None
         )
         
