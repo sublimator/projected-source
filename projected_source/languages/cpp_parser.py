@@ -101,9 +101,9 @@ class SimpleCppParser:
                         if result:
                             return result
 
-            # Check for class or struct definitions
-            elif node.type in ["class_specifier", "struct_specifier"]:
-                # Get the class/struct name
+            # Check for class, struct, or enum definitions
+            elif node.type in ["class_specifier", "struct_specifier", "enum_specifier"]:
+                # Get the class/struct/enum name
                 class_name = None
                 for child in node.children:
                     if child.type == "type_identifier":
@@ -324,7 +324,7 @@ class SimpleCppParser:
                         if result:
                             # Return the whole template declaration
                             return node
-                    elif child.type in ["class_specifier", "struct_specifier"]:
+                    elif child.type in ["class_specifier", "struct_specifier", "enum_specifier"]:
                         result = find_node(child, context_stack, depth + 1)
                         if result:
                             return result
@@ -361,21 +361,23 @@ class SimpleCppParser:
 
     def extract_struct_or_class_by_name(self, source_code: bytes, name: str) -> Optional[ExtractionResult]:
         """
-        Extract a struct or class definition by name from C++ source code.
+        Extract a struct, class, or enum definition by name from C++ source code.
         Supports:
-        - Simple structs/classes: "MyStruct" or "MyClass"
+        - Simple structs/classes/enums: "MyStruct", "MyClass", "MyEnum"
         - Namespaced: "namespace::MyClass"
         - Nested: "OuterClass::InnerClass"
         - Multiple nesting: "ns::OuterClass::InnerStruct"
 
         Args:
             source_code: The C++ source code as bytes
-            name: Name of the struct/class to extract (can include :: for namespace/nesting)
+            name: Name of the struct/class/enum to extract (can include :: for namespace/nesting)
 
         Returns:
             ExtractionResult with all the info, or None if not found
         """
-        node = self._find_node_by_qualified_name(source_code, name, ["class_specifier", "struct_specifier"])
+        node = self._find_node_by_qualified_name(
+            source_code, name, ["class_specifier", "struct_specifier", "enum_specifier"]
+        )
         return _node_to_result(node, name) if node else None
 
 
