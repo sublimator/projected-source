@@ -7,9 +7,25 @@ import logging
 from typing import Optional
 
 import tree_sitter_cpp as tscpp
-from tree_sitter import Language, Parser
+from tree_sitter import Language, Node, Parser
 
 from .extraction_result import ExtractionResult
+
+
+def _node_to_result(node: Node, qualified_name: str) -> ExtractionResult:
+    """Helper to create ExtractionResult from a tree-sitter Node."""
+    text = node.text.decode("utf8") if node.text else ""
+    return ExtractionResult(
+        text=text,
+        start_line=node.start_point.row + 1,
+        end_line=node.end_point.row + 1,
+        start_column=node.start_point.column,
+        end_column=node.end_point.column,
+        node=node,
+        node_type=node.type,
+        qualified_name=qualified_name,
+    )
+
 
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
@@ -23,7 +39,7 @@ class SimpleCppParser:
         self.language = Language(tscpp.language())
         self.parser = Parser(self.language)
 
-    def _find_node_by_qualified_name(self, source_code: bytes, target_name: str, node_types: list) -> Optional[object]:
+    def _find_node_by_qualified_name(self, source_code: bytes, target_name: str, node_types: list) -> Optional[Node]:
         """
         Generic traversal to find a node by qualified name.
 
@@ -132,6 +148,58 @@ class SimpleCppParser:
                     found_name = None
                     found_qualifiers = []
 
+                    def extract_operator_name(op_node):
+                        """Extract operator name like 'operator+', 'operator==', 'operator[]'."""
+                        # operator_name contains 'operator' keyword and the symbol(s)
+                        parts = []
+                        for child in op_node.children:
+                            if child.text:
+                                parts.append(child.text.decode("utf8"))
+                        return "".join(parts)
+
+                    def extract_template_type_name(tt_node):
+                        """Extract name from template_type like 'Container<T>'."""
+                        type_id = None
+                        template_args = None
+                        for child in tt_node.children:
+                            if child.type == "type_identifier":
+                                type_id = child.text.decode("utf8")
+                            elif child.type == "template_argument_list":
+                                template_args = child.text.decode("utf8")
+                        if type_id and template_args:
+                            return f"{type_id}{template_args}"
+                        return type_id
+
+                    def extract_qualified_parts(qnode):
+                        """Recursively extract parts from qualified_identifier.
+
+                        Handles:
+                        - Simple identifiers: MyClass::method
+                        - Template types: Container<T>::method
+                        - Operator names: MyClass::operator+
+                        """
+                        parts = []
+                        current_node = qnode
+                        while current_node and current_node.type == "qualified_identifier":
+                            found_nested = False
+                            for child in current_node.children:
+                                if child.type in ["namespace_identifier", "identifier"]:
+                                    parts.append(child.text.decode("utf8"))
+                                elif child.type == "template_type":
+                                    # Handle Container<T> in Container<T>::method
+                                    parts.append(extract_template_type_name(child))
+                                elif child.type == "operator_name":
+                                    # Handle MyClass::operator+
+                                    parts.append(extract_operator_name(child))
+                                elif child.type == "qualified_identifier":
+                                    # Nested qualified_identifier, continue loop
+                                    current_node = child
+                                    found_nested = True
+                                    break
+                            if not found_nested:
+                                break
+                        return parts
+
                     # Navigate through potential wrapper nodes
                     current = declarator
                     while current:
@@ -141,26 +209,6 @@ class SimpleCppParser:
                             if name_node:
                                 logger.debug(f"{indent}    Name node type: {name_node.type}")
                                 if name_node.type == "qualified_identifier":
-                                    # Extract all qualifiers from qualified_identifier
-                                    # This can be nested for things like utils::Helper::cleanup
-                                    def extract_qualified_parts(qnode):
-                                        """Recursively extract parts from nested qualified_identifier."""
-                                        parts = []
-                                        current = qnode
-                                        while current and current.type == "qualified_identifier":
-                                            # Look for direct children that are identifiers or namespace_identifiers
-                                            for child in current.children:
-                                                if child.type in ["namespace_identifier", "identifier"]:
-                                                    parts.append(child.text.decode("utf8"))
-                                                elif child.type == "qualified_identifier":
-                                                    # Nested qualified_identifier, recurse
-                                                    current = child
-                                                    break
-                                            else:
-                                                # No more nested qualified_identifiers
-                                                break
-                                        return parts
-
                                     all_parts = extract_qualified_parts(name_node)
                                     if all_parts:
                                         found_name = all_parts[-1]
@@ -175,6 +223,22 @@ class SimpleCppParser:
                                     found_name = name_node.text.decode("utf8")
                                     found_qualifiers = context_stack
                                     logger.debug(f"{indent}    Found field_id: {found_name} ctx={found_qualifiers}")
+                                elif name_node.type == "operator_name":
+                                    # Operator overload like operator+
+                                    found_name = extract_operator_name(name_node)
+                                    found_qualifiers = context_stack
+                                    logger.debug(f"{indent}    Found operator: {found_name} ctx={found_qualifiers}")
+                                elif name_node.type == "template_function":
+                                    # Template specialization like templateAdd<int>
+                                    for child in name_node.children:
+                                        if child.type == "identifier":
+                                            base_name = child.text.decode("utf8")
+                                        elif child.type == "template_argument_list":
+                                            template_args = child.text.decode("utf8")
+                                    # Store both forms for matching
+                                    found_name = f"{base_name}{template_args}"
+                                    found_qualifiers = context_stack
+                                    logger.debug(f"{indent}    Found template_function: {found_name}")
                             else:
                                 # Sometimes for inline methods, the name is directly a child
                                 for child in current.children:
@@ -183,30 +247,69 @@ class SimpleCppParser:
                                         found_qualifiers = context_stack
                                         logger.debug(f"{indent}    field_id: {found_name}")
                                         break
+                                    elif child.type == "operator_name":
+                                        found_name = extract_operator_name(child)
+                                        found_qualifiers = context_stack
+                                        logger.debug(f"{indent}    operator: {found_name}")
+                                        break
                             break
                         elif current.type == "pointer_declarator":
+                            # pointer_declarator has declarator as a named field
                             current = current.child_by_field_name("declarator")
                         elif current.type == "reference_declarator":
-                            current = current.child_by_field_name("declarator")
+                            # reference_declarator has function_declarator as unnamed child
+                            func_decl = None
+                            for child in current.children:
+                                if child.type == "function_declarator":
+                                    func_decl = child
+                                    break
+                            current = func_decl
                         else:
                             logger.debug(f"{indent}    Unknown declarator type, stopping")
                             break
 
                     # Check if this is the function we're looking for
-                    if found_name == target_leaf_name:
+                    # For template functions, also match the base name without template args
+                    name_matches = found_name == target_leaf_name
+                    if not name_matches and found_name and "<" in found_name:
+                        # Try matching base name for template functions
+                        base_found = found_name.split("<")[0]
+                        name_matches = base_found == target_leaf_name
+
+                    if name_matches:
                         logger.info(f"{indent}  Checking: {found_name} vs {target_leaf_name}")
                         logger.info(f"{indent}  Qualifiers: {found_qualifiers} vs {qualifiers}")
+
+                        def qualifiers_match(found_quals, target_quals):
+                            """Check if qualifier lists match, handling template types.
+
+                            Container<T> matches Container<T> (exact)
+                            Container<T> matches Container (base name)
+                            """
+                            if len(found_quals) != len(target_quals):
+                                return False
+                            for found_q, target_q in zip(found_quals, target_quals):
+                                if found_q == target_q:
+                                    continue
+                                # Try matching base name for templates
+                                found_base = found_q.split("<")[0] if "<" in found_q else found_q
+                                target_base = target_q.split("<")[0] if "<" in target_q else target_q
+                                if found_base != target_base:
+                                    return False
+                            return True
+
                         # If no qualifiers requested, match any function with this name
                         if not qualifiers:
                             logger.info(f"{indent}  MATCH FOUND (no qualifiers required)")
                             return node
-                        # Otherwise check if qualifiers match
-                        elif found_qualifiers == qualifiers:
-                            logger.info(f"{indent}  MATCH FOUND (exact qualifier match)")
+                        # Otherwise check if qualifiers match (with template handling)
+                        elif qualifiers_match(found_qualifiers, qualifiers):
+                            logger.info(f"{indent}  MATCH FOUND (qualifier match)")
                             return node
                         # Also check if the found qualifiers end with our requested qualifiers
                         elif len(found_qualifiers) >= len(qualifiers):
-                            if found_qualifiers[-len(qualifiers) :] == qualifiers:
+                            suffix = found_qualifiers[-len(qualifiers) :]
+                            if qualifiers_match(suffix, qualifiers):
                                 logger.info(f"{indent}  MATCH FOUND (suffix qualifier match)")
                                 return node
                         logger.info(f"{indent}  No match - qualifiers don't match")
@@ -254,18 +357,7 @@ class SimpleCppParser:
             ExtractionResult with all the info, or None if not found
         """
         node = self._find_node_by_qualified_name(source_code, function_name, ["function_definition"])
-        if node:
-            return ExtractionResult(
-                text=node.text.decode("utf8"),
-                start_line=node.start_point.row + 1,  # 1-based for humans
-                end_line=node.end_point.row + 1,
-                start_column=node.start_point.column,
-                end_column=node.end_point.column,
-                node=node,
-                node_type=node.type,
-                qualified_name=function_name,
-            )
-        return None
+        return _node_to_result(node, function_name) if node else None
 
     def extract_struct_or_class_by_name(self, source_code: bytes, name: str) -> Optional[ExtractionResult]:
         """
@@ -284,18 +376,7 @@ class SimpleCppParser:
             ExtractionResult with all the info, or None if not found
         """
         node = self._find_node_by_qualified_name(source_code, name, ["class_specifier", "struct_specifier"])
-        if node:
-            return ExtractionResult(
-                text=node.text.decode("utf8"),
-                start_line=node.start_point.row + 1,  # 1-based for humans
-                end_line=node.end_point.row + 1,
-                start_column=node.start_point.column,
-                end_column=node.end_point.column,
-                node=node,
-                node_type=node.type,
-                qualified_name=name,
-            )
-        return None
+        return _node_to_result(node, name) if node else None
 
 
 if __name__ == "__main__":

@@ -153,6 +153,7 @@ template<typename T>
 class TemplateClass {
 public:
     T getValue() { return value; }
+    void setValue(T v) { value = v; }
 private:
     T value;
 };
@@ -163,3 +164,180 @@ class TemplateClass<int> {
 public:
     int getValue() { return 42; }
 };
+
+// ============================================================
+// INLINE FUNCTIONS
+// ============================================================
+
+// Simple inline function
+inline int inlineAdd(int a, int b) {
+    return a + b;
+}
+
+// Static inline function
+static inline void staticInlineFunc() {
+    // static inline body
+}
+
+// Inline with complex return type
+inline std::optional<std::vector<uint8_t>>
+inlineComplexReturn(int max_len) {
+    return std::nullopt;
+}
+
+// ============================================================
+// TEMPLATE FUNCTIONS
+// ============================================================
+
+// Simple template function
+template<typename T>
+T templateAdd(T a, T b) {
+    return a + b;
+}
+
+// Template function with multiple type params
+template<typename T, typename U>
+auto templateMulti(T a, U b) -> decltype(a + b) {
+    return a + b;
+}
+
+// Template function specialization
+template<>
+int templateAdd<int>(int a, int b) {
+    return a + b + 1;  // specialized version
+}
+
+// ============================================================
+// OUT-OF-LINE TEMPLATE METHODS
+// ============================================================
+
+template<typename T>
+class Container {
+public:
+    void add(T item);
+    T get(int index) const;
+private:
+    std::vector<T> items;
+};
+
+template<typename T>
+void Container<T>::add(T item) {
+    items.push_back(item);
+}
+
+template<typename T>
+T Container<T>::get(int index) const {
+    return items[index];
+}
+
+// ============================================================
+// OPERATOR OVERLOADS
+// ============================================================
+
+class Vector2D {
+public:
+    float x, y;
+
+    Vector2D operator+(const Vector2D& other) const {
+        return Vector2D{x + other.x, y + other.y};
+    }
+
+    Vector2D& operator+=(const Vector2D& other) {
+        x += other.x;
+        y += other.y;
+        return *this;
+    }
+
+    bool operator==(const Vector2D& other) const {
+        return x == other.x && y == other.y;
+    }
+
+    float operator[](int index) const {
+        return index == 0 ? x : y;
+    }
+
+    // Conversion operator
+    explicit operator bool() const {
+        return x != 0 || y != 0;
+    }
+};
+
+// Out-of-line operator
+Vector2D operator*(const Vector2D& v, float scalar) {
+    return Vector2D{v.x * scalar, v.y * scalar};
+}
+
+// ============================================================
+// CONSTEXPR AND CONSTEVAL
+// ============================================================
+
+constexpr int constexprFactorial(int n) {
+    return n <= 1 ? 1 : n * constexprFactorial(n - 1);
+}
+
+// ============================================================
+// VIRTUAL FUNCTIONS
+// ============================================================
+
+class Base {
+public:
+    virtual void virtualFunc() {
+        // base implementation
+    }
+    virtual int pureVirtual() = 0;
+    virtual ~Base() = default;
+};
+
+class Derived : public Base {
+public:
+    void virtualFunc() override {
+        // derived implementation
+    }
+    int pureVirtual() override {
+        return 42;
+    }
+};
+
+// ============================================================
+// EXTERN C
+// ============================================================
+
+extern "C" {
+    void externCFunc() {
+        // C linkage function
+    }
+
+    int externCWithReturn(int x) {
+        return x * 2;
+    }
+}
+
+// ============================================================
+// FRIEND FUNCTIONS
+// ============================================================
+
+class SecretHolder {
+    friend void revealSecret(SecretHolder& holder);
+    int secret = 42;
+};
+
+void revealSecret(SecretHolder& holder) {
+    holder.secret = 0;
+}
+
+// ============================================================
+// NOEXCEPT AND ATTRIBUTES
+// ============================================================
+
+void noexceptFunc() noexcept {
+    // guaranteed not to throw
+}
+
+[[nodiscard]] int nodiscardFunc() {
+    return 42;
+}
+
+[[deprecated("use newFunc instead")]]
+void deprecatedFunc() {
+    // old implementation
+}

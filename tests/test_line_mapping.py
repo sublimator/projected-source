@@ -268,19 +268,19 @@ class TestGitHubIntegrationDirtyFile:
 
         # Read the base file
         base_content = test_file.read_text()
-        lines = base_content.split('\n')
+        lines = base_content.split("\n")
 
         # Insert markers around functionTwo (lines 11-13 in base, 0-indexed: 10-12)
         # functionTwo starts at line 11: "void functionTwo() {"
         # and ends at line 13: "}"
         new_lines = (
-            lines[:10] +  # Lines 1-10 unchanged
-            ['//@@start func-two'] +  # New line 11
-            lines[10:13] +  # Old lines 11-13 become new 12-14
-            ['//@@end func-two'] +  # New line 15
-            lines[13:]  # Rest of file
+            lines[:10]  # Lines 1-10 unchanged
+            + ["//@@start func-two"]  # New line 11
+            + lines[10:13]  # Old lines 11-13 become new 12-14
+            + ["//@@end func-two"]  # New line 15
+            + lines[13:]  # Rest of file
         )
-        test_file.write_text('\n'.join(new_lines))
+        test_file.write_text("\n".join(new_lines))
 
         github = GitHubIntegration(temp_git_repo)
 
@@ -354,17 +354,11 @@ class TestEndToEndPermalink:
 
         # Add a single marker pair
         base_content = test_file.read_text()
-        lines = base_content.split('\n')
+        lines = base_content.split("\n")
 
         # Insert markers around functionTwo (line 11 in base)
-        new_lines = (
-            lines[:10] +
-            ['//@@start func-two'] +
-            lines[10:13] +
-            ['//@@end func-two'] +
-            lines[13:]
-        )
-        test_file.write_text('\n'.join(new_lines))
+        new_lines = lines[:10] + ["//@@start func-two"] + lines[10:13] + ["//@@end func-two"] + lines[13:]
+        test_file.write_text("\n".join(new_lines))
 
         github = GitHubIntegration(temp_git_repo_with_remote)
 
