@@ -108,12 +108,14 @@ class TemplateRenderer:
                 # Check if we also have a marker - extract marker within function
                 if marker:
                     if hasattr(extractor, "extract_function_marker"):
-                        code_text, start_line, end_line = extractor.extract_function_marker(file_path, function, marker)
+                        code_text, start_line, end_line = extractor.extract_function_marker(
+                            resolved_path, function, marker
+                        )
                         logger.info(f"Extracted marker '{marker}' from function '{function}' in {file_path}")
                     else:
                         return "❌ **ERROR**: Function marker extraction not supported for this file type"
                 else:
-                    code_text, start_line, end_line = extractor.extract_function(file_path, function)
+                    code_text, start_line, end_line = extractor.extract_function(resolved_path, function)
                     logger.info(f"Extracted function '{function}' from {file_path}")
             elif function_macro:
                 # Handle function_macro parameter
@@ -126,28 +128,28 @@ class TemplateRenderer:
                 # Check if we also have a marker - extract marker within macro
                 if marker:
                     code_text, start_line, end_line = extractor.extract_function_macro_marker(
-                        file_path, macro_spec, marker
+                        resolved_path, macro_spec, marker
                     )
                     logger.info(f"Extracted marker '{marker}' from function_macro '{macro_spec}' in {file_path}")
                 else:
-                    code_text, start_line, end_line = extractor.extract_function_macro(file_path, macro_spec)
+                    code_text, start_line, end_line = extractor.extract_function_macro(resolved_path, macro_spec)
                     logger.info(f"Extracted function_macro '{macro_spec}' from {file_path}")
             elif macro_definition:
-                code_text, start_line, end_line = extractor.extract_macro_definition(file_path, macro_definition)
+                code_text, start_line, end_line = extractor.extract_macro_definition(resolved_path, macro_definition)
                 logger.info(f"Extracted macro_definition '{macro_definition}' from {file_path}")
             elif struct:
                 # Extract struct/class (for C/C++)
                 if hasattr(extractor, "extract_struct"):
-                    code_text, start_line, end_line = extractor.extract_struct(file_path, struct)
+                    code_text, start_line, end_line = extractor.extract_struct(resolved_path, struct)
                     logger.info(f"Extracted struct/class '{struct}' from {file_path}")
                 else:
                     return "❌ **ERROR**: Struct extraction not supported for this file type"
             elif marker:
-                code_text, start_line, end_line = extractor.extract_marker(file_path, marker)
+                code_text, start_line, end_line = extractor.extract_marker(resolved_path, marker)
                 logger.info(f"Extracted marker '{marker}' from {file_path}")
             elif lines:
                 start_line, end_line = lines
-                code_text, start_line, end_line = extractor.extract_lines(file_path, start_line, end_line)
+                code_text, start_line, end_line = extractor.extract_lines(resolved_path, start_line, end_line)
                 logger.info(f"Extracted lines {start_line}-{end_line} from {file_path}")
             else:
                 return (
