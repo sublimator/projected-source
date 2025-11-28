@@ -247,3 +247,61 @@ class TestCppExtractor:
         
         assert "struct InnerStruct" in text
         assert "bool flag" in text
+    
+    def test_extract_function_marker(self, extractor, test_file):
+        """Test extracting a marked section within a regular function."""
+        # Test simple function with marker
+        text, start, end = extractor.extract_function_marker(test_file, "functionWithMarkers", "calculation")
+        
+        assert "int result = temp * 2;" in text
+        assert "@@start" not in text
+        assert "@@end" not in text
+        assert "setup" not in text  # Should not include other markers
+        
+        # Test another marker in the same function
+        text, start, end = extractor.extract_function_marker(test_file, "functionWithMarkers", "setup")
+        
+        assert "int temp = a + b;" in text
+        assert "calculation" not in text
+        
+        # Test hyphenated marker name
+        text, start, end = extractor.extract_function_marker(test_file, "functionWithMarkers", "saving-ledger")
+        
+        assert "if (result > 0)" in text
+        assert "save to ledger" in text
+        assert "@@start" not in text
+    
+    def test_extract_namespaced_function_marker(self, extractor, test_file):
+        """Test extracting marker from a namespaced function."""
+        text, start, end = extractor.extract_function_marker(
+            test_file, 
+            "FunctionNamespace::namespacedFunctionWithMarker", 
+            "processing"
+        )
+        
+        assert "int processed = value * value;" in text
+        assert "std::cout << processed" in text
+        assert "@@start" not in text
+    
+    def test_extract_class_method_marker(self, extractor, test_file):
+        """Test extracting marker from a class method."""
+        # Test validation marker
+        text, start, end = extractor.extract_function_marker(
+            test_file,
+            "ClassWithMethods::methodWithMarker",
+            "validation"
+        )
+        
+        assert "if (input < 0)" in text
+        assert "return -1;" in text
+        assert "computation" not in text
+        
+        # Test computation marker
+        text, start, end = extractor.extract_function_marker(
+            test_file,
+            "ClassWithMethods::methodWithMarker",
+            "computation"
+        )
+        
+        assert "int output = input * input + input;" in text
+        assert "validation" not in text

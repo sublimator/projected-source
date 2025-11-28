@@ -62,9 +62,35 @@ void simpleFunction() {
     // function body
 }
 
+int functionWithMarkers(int a, int b) {
+    //@@start setup
+    int temp = a + b;
+    //@@end setup
+    
+    //@@start calculation
+    int result = temp * 2;
+    //@@end calculation
+    
+    //@@start saving-ledger
+    // Simulated save operation
+    if (result > 0) {
+        // save to ledger
+    }
+    //@@end saving-ledger
+    
+    return result;
+}
+
 namespace FunctionNamespace {
     int namespacedFunction(int x) {
         return x * 2;
+    }
+    
+    void namespacedFunctionWithMarker(int value) {
+        //@@start processing
+        int processed = value * value;
+        std::cout << processed << std::endl;
+        //@@end processing
     }
 }
 
@@ -72,6 +98,20 @@ class ClassWithMethods {
 public:
     void simpleMethod() {}
     static int staticMethod(int x) { return x; }
+    
+    int methodWithMarker(int input) {
+        //@@start validation
+        if (input < 0) {
+            return -1;
+        }
+        //@@end validation
+        
+        //@@start computation
+        int output = input * input + input;
+        //@@end computation
+        
+        return output;
+    }
     
     // Nested class with method
     class Nested {
