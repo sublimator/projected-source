@@ -145,8 +145,18 @@ class TemplateRenderer:
                 name = struct or var
                 kind = "struct/class/enum" if struct else "variable"
                 if hasattr(extractor, "extract_struct"):
-                    code_text, start_line, end_line = extractor.extract_struct(resolved_path, name)
-                    logger.info(f"Extracted {kind} '{name}' from {file_path}")
+                    if marker:
+                        # Extract marker within struct/var
+                        if hasattr(extractor, "extract_struct_marker"):
+                            code_text, start_line, end_line = extractor.extract_struct_marker(
+                                resolved_path, name, marker
+                            )
+                            logger.info(f"Extracted marker '{marker}' from {kind} '{name}' in {file_path}")
+                        else:
+                            return f"❌ **ERROR**: Marker extraction in {kind} not supported"
+                    else:
+                        code_text, start_line, end_line = extractor.extract_struct(resolved_path, name)
+                        logger.info(f"Extracted {kind} '{name}' from {file_path}")
                 else:
                     return f"❌ **ERROR**: {kind.capitalize()} extraction not supported for this file type"
             elif marker:

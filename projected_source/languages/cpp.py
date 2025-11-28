@@ -52,39 +52,30 @@ class CppExtractor(BaseExtractor):
         logger.debug(f"Found function '{function_name}' at {result.location}")
         return result.to_tuple()  # For backwards compatibility
 
-    def extract_function_marker(self, file_path: Path, function_name: str, marker: str) -> Tuple[str, int, int]:
+    def _extract_node_marker(
+        self, file_path: Path, result, marker: str, context_name: str
+    ) -> Tuple[str, int, int]:
         """
-        Extract a marked section from within a function.
+        Extract a marked section from within any extracted node.
 
         Args:
             file_path: Path to the file
-            function_name: Name of the function (can include :: for namespaces/classes)
+            result: ExtractionResult containing the node
             marker: Marker name to extract
+            context_name: Name for error messages (e.g., "function 'foo'" or "variable 'bar'")
 
         Returns:
             Tuple of (code_text, start_line, end_line)
-
-        Raises:
-            ValueError: If function or marker not found
         """
-        source = file_path.read_bytes()
+        node = result.node
 
-        # First, find the function using the SimpleCppParser
-        result = self.cpp_parser.extract_function_by_name(source, function_name)
-
-        if not result:
-            raise ValueError(f"Function '{function_name}' not found in {file_path}")
-
-        # The result contains a node field with the actual tree-sitter node
-        function_node = result.node
-
-        if function_node:
-            # Find markers within the function node
-            markers = self.find_markers_in_node(function_node)
+        if node:
+            # Find markers within the node
+            markers = self.find_markers_in_node(node)
 
             if marker not in markers:
                 available = ", ".join(markers.keys()) if markers else "none"
-                raise ValueError(f"Marker '{marker}' not found in function '{function_name}'. Available: {available}")
+                raise ValueError(f"Marker '{marker}' not found in {context_name}. Available: {available}")
 
             marker_start, marker_end = markers[marker]
 
@@ -96,35 +87,39 @@ class CppExtractor(BaseExtractor):
             actual_start_line = marker_start
             actual_end_line = marker_end
         else:
-            # Fallback: parse just the function text as a standalone tree
-            function_text = result.text
-            function_tree = self.parser.parse(function_text.encode("utf8"))
-            function_node = function_tree.root_node
+            # Fallback: parse just the text as a standalone tree
+            node_text = result.text
+            node_tree = self.parser.parse(node_text.encode("utf8"))
+            node = node_tree.root_node
 
-            # Find markers within the parsed function
-            markers = self.find_markers_in_node(function_node)
+            markers = self.find_markers_in_node(node)
 
             if marker not in markers:
                 available = ", ".join(markers.keys()) if markers else "none"
-                raise ValueError(f"Marker '{marker}' not found in function '{function_name}'. Available: {available}")
+                raise ValueError(f"Marker '{marker}' not found in {context_name}. Available: {available}")
 
-            # Get the marker boundaries relative to the function
             marker_start, marker_end = markers[marker]
 
-            # Since we parsed just the function, line numbers are relative to the function
-            # We need to adjust them to be relative to the file
+            # Adjust line numbers to be relative to the file
             actual_start_line = result.start_line + marker_start - 1
             actual_end_line = result.start_line + marker_end - 1
 
-            # Extract the actual lines from the function text
-            function_lines = function_text.splitlines()
-            marker_lines = function_lines[marker_start - 1 : marker_end]
+            node_lines = node_text.splitlines()
+            marker_lines = node_lines[marker_start - 1 : marker_end]
             marker_text = "\n".join(marker_lines)
 
-        logger.debug(
-            f"Found marker '{marker}' in function '{function_name}' at lines {actual_start_line}-{actual_end_line}"
-        )
+        logger.debug(f"Found marker '{marker}' in {context_name} at lines {actual_start_line}-{actual_end_line}")
         return marker_text, actual_start_line, actual_end_line
+
+    def extract_function_marker(self, file_path: Path, function_name: str, marker: str) -> Tuple[str, int, int]:
+        """Extract a marked section from within a function."""
+        source = file_path.read_bytes()
+        result = self.cpp_parser.extract_function_by_name(source, function_name)
+
+        if not result:
+            raise ValueError(f"Function '{function_name}' not found in {file_path}")
+
+        return self._extract_node_marker(file_path, result, marker, f"function '{function_name}'")
 
     def extract_struct(self, file_path: Path, struct_name: str) -> Tuple[str, int, int]:
         """
@@ -155,6 +150,16 @@ class CppExtractor(BaseExtractor):
 
         logger.debug(f"Found struct/class '{struct_name}' at {result.location}")
         return result.to_tuple()  # For backwards compatibility
+
+    def extract_struct_marker(self, file_path: Path, struct_name: str, marker: str) -> Tuple[str, int, int]:
+        """Extract a marked section from within a struct/class/enum/variable declaration."""
+        source = file_path.read_bytes()
+        result = self.cpp_parser.extract_struct_or_class_by_name(source, struct_name)
+
+        if not result:
+            raise ValueError(f"Struct/class/variable '{struct_name}' not found in {file_path}")
+
+        return self._extract_node_marker(file_path, result, marker, f"'{struct_name}'")
 
     def extract_function_macro(self, file_path: Path, macro_spec: Dict) -> Tuple[str, int, int]:
         """
