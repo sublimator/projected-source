@@ -60,6 +60,7 @@ class TemplateRenderer:
         file_path: str,
         function: str = None,
         struct: str = None,
+        var: str = None,
         function_macro: Union[str, Dict] = None,
         macro_definition: str = None,
         lines: Tuple[int, int] = None,
@@ -75,7 +76,8 @@ class TemplateRenderer:
         Args:
             file_path: Path to the source file
             function: Function name to extract
-            struct: Struct/class name to extract (C/C++)
+            struct: Struct/class/enum name to extract (C/C++)
+            var: Variable/constant declaration to extract (C/C++)
             function_macro: Macro that defines a function (dict with 'name' and optional 'arg0', 'arg1', etc)
             macro_definition: Macro definition name to extract (#define statement)
             lines: Tuple of (start_line, end_line) to extract
@@ -90,9 +92,10 @@ class TemplateRenderer:
 
         Examples in templates:
             {{ code('src/file.cpp', function='myFunc') }}
+            {{ code('src/file.cpp', struct='MyClass') }}
+            {{ code('src/file.cpp', var='errorInfos') }}
             {{ code('src/file.cpp', lines=(10, 20)) }}
             {{ code('src/file.cpp', marker='example1') }}
-            {{ code('src/file.cpp', lines=(10, 20), blame=True) }}
         """
         try:
             # Resolve file path relative to repo
@@ -137,13 +140,15 @@ class TemplateRenderer:
             elif macro_definition:
                 code_text, start_line, end_line = extractor.extract_macro_definition(resolved_path, macro_definition)
                 logger.info(f"Extracted macro_definition '{macro_definition}' from {file_path}")
-            elif struct:
-                # Extract struct/class (for C/C++)
+            elif struct or var:
+                # Extract struct/class/enum/variable (for C/C++)
+                name = struct or var
+                kind = "struct/class/enum" if struct else "variable"
                 if hasattr(extractor, "extract_struct"):
-                    code_text, start_line, end_line = extractor.extract_struct(resolved_path, struct)
-                    logger.info(f"Extracted struct/class '{struct}' from {file_path}")
+                    code_text, start_line, end_line = extractor.extract_struct(resolved_path, name)
+                    logger.info(f"Extracted {kind} '{name}' from {file_path}")
                 else:
-                    return "❌ **ERROR**: Struct extraction not supported for this file type"
+                    return f"❌ **ERROR**: {kind.capitalize()} extraction not supported for this file type"
             elif marker:
                 code_text, start_line, end_line = extractor.extract_marker(resolved_path, marker)
                 logger.info(f"Extracted marker '{marker}' from {file_path}")
@@ -153,7 +158,7 @@ class TemplateRenderer:
                 logger.info(f"Extracted lines {start_line}-{end_line} from {file_path}")
             else:
                 return (
-                    f"❌ **ERROR**: Must specify function, struct, function_macro, "
+                    f"❌ **ERROR**: Must specify function, struct, var, function_macro, "
                     f"macro_definition, lines, or marker for {file_path}"
                 )
 

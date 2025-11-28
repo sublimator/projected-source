@@ -138,6 +138,40 @@ class SimpleCppParser:
                                 if result:
                                     return result
 
+            # Check for variable/constant declarations
+            elif node.type == "declaration" and "declaration" in node_types:
+                # Find the variable name from init_declarator
+                var_name = None
+                for child in node.children:
+                    if child.type == "init_declarator":
+                        # Look for identifier in array_declarator, pointer_declarator, or direct
+                        for subchild in child.children:
+                            if subchild.type == "identifier":
+                                var_name = subchild.text.decode("utf8") if subchild.text else None
+                                break
+                            elif subchild.type in ["array_declarator", "pointer_declarator"]:
+                                for leaf in subchild.children:
+                                    if leaf.type == "identifier":
+                                        var_name = leaf.text.decode("utf8") if leaf.text else None
+                                        break
+                                if var_name:
+                                    break
+                        break
+
+                logger.debug(f"{indent}Found declaration: {var_name}")
+
+                if var_name == target_leaf_name:
+                    if not qualifiers:
+                        logger.info(f"{indent}  MATCH FOUND (no qualifiers required)")
+                        return node
+                    elif context_stack == qualifiers:
+                        logger.info(f"{indent}  MATCH FOUND (exact qualifier match)")
+                        return node
+                    elif len(context_stack) >= len(qualifiers):
+                        if context_stack[-len(qualifiers) :] == qualifiers:
+                            logger.info(f"{indent}  MATCH FOUND (suffix qualifier match)")
+                            return node
+
             # Check for regular function definitions
             elif node.type == "function_definition" and "function_definition" in node_types:
                 logger.debug(f"{indent}Found function_definition")
@@ -361,22 +395,23 @@ class SimpleCppParser:
 
     def extract_struct_or_class_by_name(self, source_code: bytes, name: str) -> Optional[ExtractionResult]:
         """
-        Extract a struct, class, or enum definition by name from C++ source code.
+        Extract a struct, class, enum, or variable declaration by name from C++ source code.
         Supports:
         - Simple structs/classes/enums: "MyStruct", "MyClass", "MyEnum"
+        - Variable declarations: "myArray", "myConstant"
         - Namespaced: "namespace::MyClass"
         - Nested: "OuterClass::InnerClass"
         - Multiple nesting: "ns::OuterClass::InnerStruct"
 
         Args:
             source_code: The C++ source code as bytes
-            name: Name of the struct/class/enum to extract (can include :: for namespace/nesting)
+            name: Name of the struct/class/enum/variable to extract (can include :: for namespace/nesting)
 
         Returns:
             ExtractionResult with all the info, or None if not found
         """
         node = self._find_node_by_qualified_name(
-            source_code, name, ["class_specifier", "struct_specifier", "enum_specifier"]
+            source_code, name, ["class_specifier", "struct_specifier", "enum_specifier", "declaration"]
         )
         return _node_to_result(node, name) if node else None
 
