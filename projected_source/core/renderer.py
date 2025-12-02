@@ -2,14 +2,19 @@
 Jinja2 template rendering with code extraction functions.
 """
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union
 
 import jinja2
 
 from ..languages import get_extractor
 from .github import GitHubIntegration
+
+if TYPE_CHECKING:
+    from .changes_set import ChangesSet
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +32,13 @@ def _collect_error_fixture(file_path: Path, error: str, template_context: str = 
 class TemplateRenderer:
     """Render Jinja2 templates with code extraction functions."""
 
-    def __init__(self, template_dir: Path = None, repo_path: Path = None, remap_dirty_lines: bool = False):
+    def __init__(
+        self,
+        template_dir: Path = None,
+        repo_path: Path = None,
+        remap_dirty_lines: bool = False,
+        changes_set: "ChangesSet" = None,
+    ):
         """
         Initialize the renderer.
 
@@ -37,10 +48,14 @@ class TemplateRenderer:
             remap_dirty_lines: If True, remap line numbers in dirty files to match
                                committed version (for sharing). Affects permalinks
                                and code block line numbers.
+            changes_set: Optional ChangesSet for tracking documentation coverage.
+                         When provided, each code() call will mark its region as
+                         covered. Check changes_set.uncovered() after rendering.
         """
         self.template_dir = template_dir or Path.cwd()
         self.repo_path = repo_path or Path.cwd()
         self.remap_dirty_lines = remap_dirty_lines
+        self.changes_set = changes_set
         self.github = GitHubIntegration(self.repo_path)
 
         # Create Jinja2 environment
@@ -51,6 +66,7 @@ class TemplateRenderer:
         # Register custom functions
         self.env.globals["code"] = self._code_function
         self.env.globals["ghc"] = self._code_function  # Alias for compatibility
+        self.env.globals["ignore_changes"] = self._ignore_changes_function
 
         # Load project-specific custom tags if available
         # (loaded on-demand when rendering templates)
@@ -172,6 +188,10 @@ class TemplateRenderer:
                     f"macro_definition, lines, or marker for {file_path}"
                 )
 
+            # Track this region as covered if we have a ChangesSet
+            if self.changes_set is not None:
+                self.changes_set.subtract(resolved_path, start_line, end_line)
+
             # Remap line numbers if requested (for sharing docs from dirty files)
             display_start = start_line
             display_end = end_line
@@ -229,6 +249,69 @@ class TemplateRenderer:
             # Collect file as fixture if collection is enabled
             _collect_error_fixture(resolved_path, str(e))
             return error_msg
+
+    def _ignore_changes_function(
+        self,
+        file_path: str,
+        function: str = None,
+        struct: str = None,
+        var: str = None,
+        function_macro: Union[str, Dict] = None,
+        macro_definition: str = None,
+        lines: Tuple[int, int] = None,
+        marker: str = None,
+    ) -> str:
+        """
+        Ignore specified regions from change validation.
+
+        Uses same extraction specs as code() - or ignores whole file if no spec given.
+
+        Examples:
+            {{ ignore_changes('file.cmake') }}  # whole file
+            {{ ignore_changes('file.cpp', function='helper') }}
+            {{ ignore_changes('file.cpp', lines=(1, 100)) }}
+        """
+        if self.changes_set is None:
+            return ""
+
+        resolved_path = Path(file_path)
+        if not resolved_path.is_absolute():
+            resolved_path = self.repo_path / resolved_path
+
+        # If no extraction spec, ignore entire file
+        has_spec = any([function, struct, var, function_macro, macro_definition, lines, marker])
+        if not has_spec:
+            # Ignore all lines (use a large range)
+            self.changes_set.subtract(resolved_path, 1, 999999)
+            logger.info(f"Ignoring all changes in: {file_path}")
+            return ""
+
+        # Use extractors to find the region, same as code()
+        try:
+            extractor = get_extractor(resolved_path)
+
+            if function:
+                _, start_line, end_line = extractor.extract_function(resolved_path, function)
+            elif function_macro:
+                macro_spec = {"name": function_macro} if isinstance(function_macro, str) else function_macro
+                _, start_line, end_line = extractor.extract_function_macro(resolved_path, macro_spec)
+            elif macro_definition:
+                _, start_line, end_line = extractor.extract_macro_definition(resolved_path, macro_definition)
+            elif struct or var:
+                name = struct or var
+                _, start_line, end_line = extractor.extract_struct(resolved_path, name)
+            elif marker:
+                _, start_line, end_line = extractor.extract_marker(resolved_path, marker)
+            elif lines:
+                start_line, end_line = lines
+
+            self.changes_set.subtract(resolved_path, start_line, end_line)
+            logger.info(f"Ignoring changes: {file_path}:{start_line}-{end_line}")
+
+        except Exception as e:
+            logger.warning(f"Failed to extract region for ignore_changes: {e}")
+
+        return ""
 
     def _find_custom_tags_file(self, start_path: Path) -> Optional[Path]:
         """

@@ -8,13 +8,14 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
 
 import click
 from rich.console import Console
 from rich.table import Table
 
 from . import setup_logging
+from .core.changes_set import ChangesSet
 from .core.renderer import TemplateRenderer
 
 logger = logging.getLogger(__name__)
@@ -121,7 +122,22 @@ def cli(verbose, debug):
     is_flag=True,
     help="Remap line numbers in dirty files to match committed version (for sharing)",
 )
-def render(input_path, output_path, repo_path, collect_error_fixtures, remap_dirty_lines):
+@click.option(
+    "-V", "--validate-changes",
+    "changes_base",
+    default=None,
+    metavar="BASE",
+    help="Validate changes are documented. BASE: commit/branch/range, or 'auto' to detect.",
+)
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Exit with error code 1 if validation fails (use with -V)",
+)
+def render(
+    input_path, output_path, repo_path, collect_error_fixtures, remap_dirty_lines,
+    changes_base, strict,
+):
     """
     Render Jinja2 templates to markdown.
 
@@ -204,13 +220,64 @@ def render(input_path, output_path, repo_path, collect_error_fixtures, remap_dir
         console.print("[red]✗ Input and output types must match (both files or both directories)[/red]")
         sys.exit(1)
 
+    # Set up ChangesSet for validation if requested (-V / --validate-changes)
+    changes_set: Optional[ChangesSet] = None
+    if changes_base:
+        # "auto" means auto-detect base
+        base = None if changes_base == "auto" else changes_base
+        try:
+            changes_set = ChangesSet.from_diff(base=base, repo_path=repo_path)
+            if base and ".." in base:
+                range_display = base
+            else:
+                detected = ChangesSet.detect_base(repo_path) if base is None else base
+                range_display = f"{detected[:12]}..HEAD"
+            console.print(f"[cyan]Validating changes: {range_display}[/cyan]")
+        except RuntimeError as e:
+            console.print(f"[red]✗ Failed to get diff: {e}[/red]")
+            sys.exit(1)
+
     # Process based on input type
     if input_is_stdin:
-        _render_stdin(output_path, repo_path, output_to_stdout, remap_dirty_lines)
+        _render_stdin(output_path, repo_path, output_to_stdout, remap_dirty_lines, changes_set)
     elif input_is_dir:
-        _render_directory(input_path, output_path, repo_path, remap_dirty_lines)
+        _render_directory(input_path, output_path, repo_path, remap_dirty_lines, changes_set)
     else:
-        _render_file(input_path, output_path, repo_path, output_to_stdout, remap_dirty_lines)
+        _render_file(input_path, output_path, repo_path, output_to_stdout, remap_dirty_lines, changes_set)
+
+    # Report validation results
+    if changes_set is not None:
+        uncovered = changes_set.uncovered()
+        if uncovered:
+            console.print(f"\n[yellow]⚠ {len(uncovered)} uncovered regions:[/yellow]")
+            # Group by file
+            from collections import defaultdict
+            by_file = defaultdict(list)
+            for region in uncovered:
+                by_file[region.file_path].append((region.start_line, region.end_line))
+
+            for abs_path, ranges in by_file.items():
+                try:
+                    rel_path = abs_path.relative_to(repo_path)
+                except ValueError:
+                    rel_path = abs_path
+                console.print(f"\n[cyan]━━━ {rel_path} ━━━[/cyan]")
+
+                # Read file once, show each range
+                try:
+                    lines = abs_path.read_text().splitlines()
+                    for start, end in ranges:
+                        console.print(f"[dim]{start}-{end}:[/dim]")
+                        for i in range(start - 1, min(end, len(lines))):
+                            console.print(f"  [dim]{i+1:4}[/dim] {lines[i]}")
+                except Exception as e:
+                    console.print(f"  [red]Could not read file: {e}[/red]")
+
+            if strict:
+                console.print("\n[red]✗ Validation failed (--strict mode)[/red]")
+                sys.exit(1)
+        else:
+            console.print("[green]✓ All changes documented[/green]")
 
     # Finalize fixture collection
     if _fixture_collector:
@@ -224,13 +291,15 @@ def render(input_path, output_path, repo_path, collect_error_fixtures, remap_dir
             console.print("[green]No errors to collect[/green]")
 
 
-def _render_stdin(output_file, repo_path, output_to_stdout, remap_dirty_lines=False):
+def _render_stdin(output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None):
     """Render template from stdin."""
     # Read template from stdin
     template_content = sys.stdin.read()
 
     # Use current directory as template directory for relative paths
-    renderer = TemplateRenderer(template_dir=Path.cwd(), repo_path=repo_path, remap_dirty_lines=remap_dirty_lines)
+    renderer = TemplateRenderer(
+        template_dir=Path.cwd(), repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
+    )
 
     # Render the template directly from string
     rendered = renderer.env.from_string(template_content).render()
@@ -245,14 +314,16 @@ def _render_stdin(output_file, repo_path, output_to_stdout, remap_dirty_lines=Fa
         console.print(f"[green]✓[/green] stdin → {output_file}")
 
 
-def _render_file(input_file, output_file, repo_path, output_to_stdout, remap_dirty_lines=False):
+def _render_file(input_file, output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None):
     """Render a single template file."""
     # Determine template directory
     template_dir = input_file.parent
     template_name = input_file.name
 
     # Create renderer
-    renderer = TemplateRenderer(template_dir=template_dir, repo_path=repo_path, remap_dirty_lines=remap_dirty_lines)
+    renderer = TemplateRenderer(
+        template_dir=template_dir, repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
+    )
 
     try:
         rendered = renderer.render_template(template_name)
@@ -271,7 +342,7 @@ def _render_file(input_file, output_file, repo_path, output_to_stdout, remap_dir
         sys.exit(1)
 
 
-def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False):
+def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False, changes_set=None):
     """Render all templates in a directory."""
     templates = list(input_dir.glob("**/*.j2"))
 
@@ -282,7 +353,9 @@ def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False)
     console.print(f"[bold]Processing {len(templates)} templates from {input_dir}[/bold]")
 
     # Create renderer
-    renderer = TemplateRenderer(template_dir=input_dir, repo_path=repo_path, remap_dirty_lines=remap_dirty_lines)
+    renderer = TemplateRenderer(
+        template_dir=input_dir, repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
+    )
 
     # Track results
     success_count = 0
@@ -341,6 +414,138 @@ def list_functions():
     table.add_row("  lines=", "Extract specific line range")
 
     console.print(table)
+
+
+@cli.command("ai-guide")
+def ai_guide():
+    """Output comprehensive guide for AI assistants."""
+    guide = '''# projected-source AI Guide
+
+## Overview
+projected-source extracts code from C/C++ source files into Jinja2 templates,
+creating documentation that stays in sync with the codebase. Uses tree-sitter
+for accurate parsing.
+
+## CLI Usage
+
+```bash
+# Render a single template
+projected-source render template.md.j2
+
+# Render to specific output
+projected-source render template.md.j2 output.md
+
+# Render directory of templates
+projected-source render docs/
+
+# Validate documentation covers code changes
+projected-source render docs/ -V auto              # auto-detect base
+projected-source render docs/ -V origin/main       # specific base
+projected-source render docs/ -V HEAD~5..HEAD~2    # commit range
+projected-source render docs/ -V auto --strict     # exit 1 if uncovered
+```
+
+## Template Functions
+
+### code() - Extract code with GitHub permalinks
+
+```jinja
+{# Extract a function #}
+{{ code('src/file.cpp', function='processTransaction') }}
+
+{# Extract a struct/class/enum #}
+{{ code('src/file.h', struct='Config') }}
+
+{# Extract a variable/constant declaration #}
+{{ code('src/file.cpp', var='errorCodes') }}
+
+{# Extract lines by range #}
+{{ code('src/file.cpp', lines=(10, 50)) }}
+
+{# Extract between markers #}
+{{ code('src/file.cpp', marker='example-usage') }}
+{# In source: //@@start example-usage ... //@@end example-usage #}
+
+{# Extract marker within a function #}
+{{ code('src/file.cpp', function='main', marker='init-section') }}
+
+{# Extract macro-defined function #}
+{{ code('src/file.cpp', function_macro={'name': 'DEFINE_HANDLER', 'arg0': 'onConnect'}) }}
+
+{# Extract macro definition #}
+{{ code('src/file.h', macro_definition='MAX_BUFFER_SIZE') }}
+
+{# Options #}
+{{ code('src/file.cpp', function='foo', github=False) }}      {# no permalink #}
+{{ code('src/file.cpp', function='foo', line_numbers=False) }} {# no line nums #}
+{{ code('src/file.cpp', function='foo', blame=True) }}         {# git blame #}
+{{ code('src/file.cpp', function='foo', language='cpp') }}     {# force language #}
+```
+
+### ignore_changes() - Exclude regions from validation
+
+When using `-V` to validate documentation coverage, use `ignore_changes()` to
+exclude files or regions that don't need documentation:
+
+```jinja
+{# Ignore entire file #}
+{{ ignore_changes('Builds/CMake/config.cmake') }}
+
+{# Ignore specific constructs (same syntax as code()) #}
+{{ ignore_changes('src/file.cpp', function='internalHelper') }}
+{{ ignore_changes('src/file.cpp', struct='PrivateImpl') }}
+{{ ignore_changes('src/file.cpp', lines=(1, 100)) }}
+{{ ignore_changes('src/test/Test.cpp') }}  {# ignore test files #}
+```
+
+## Marker Syntax in Source Files
+
+```cpp
+//@@start section-name
+code here
+//@@end section-name
+```
+
+## Output Format
+
+code() outputs markdown with:
+1. GitHub permalink header (clickable link to source)
+2. Fenced code block with syntax highlighting
+3. Line numbers matching the source file
+
+Example output:
+```
+📍 [`src/main.cpp:42-58`](https://github.com/org/repo/blob/abc123/src/main.cpp#L42-L58)
+```cpp
+  42 void processTransaction() {
+  43     // implementation
+  44 }
+```
+
+## Validation Mode (-V)
+
+Shows uncovered code changes with actual source:
+
+```
+⚠ 3 uncovered regions:
+
+━━━ src/handlers/Submit.cpp ━━━
+230-261:
+   230 void handleSubmit() {
+   231     // new code not documented
+   ...
+```
+
+## Tips for AI Assistants
+
+1. **Always use relative paths** from repo root in code() calls
+2. **Use markers** for documenting specific sections within large functions
+3. **Group related extractions** logically in your documentation
+4. **Use ignore_changes()** at the top of templates for test files, build configs
+5. **Combine function + marker** to extract subsections of large functions
+6. **Check -V output** to ensure all changes are documented
+'''
+    click.echo(guide)
 
 
 def main():
