@@ -1,5 +1,8 @@
 __pycache__
 *.pyc
 .idea
+.venv/
+.claude/
 rendered
+tests/fixtures/collected/
 
