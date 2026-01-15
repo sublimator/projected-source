@@ -5,7 +5,6 @@ Tests that when markers are added to files (but not committed),
 the GitHub permalinks point to the correct committed line numbers.
 """
 
-import os
 import shutil
 import subprocess
 import tempfile

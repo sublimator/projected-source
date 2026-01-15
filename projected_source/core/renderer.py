@@ -81,6 +81,7 @@ class TemplateRenderer:
         macro_definition: str = None,
         lines: Tuple[int, int] = None,
         marker: str = None,
+        signature: str = None,
         github: bool = True,
         blame: bool = False,
         line_numbers: bool = True,
@@ -98,6 +99,8 @@ class TemplateRenderer:
             macro_definition: Macro definition name to extract (#define statement)
             lines: Tuple of (start_line, end_line) to extract
             marker: Marker name to extract between //@@start and //@@end
+            signature: String to match against parameter types for overload disambiguation.
+                       Use partial type names like "TMProposeSet" to select a specific overload.
             github: Include GitHub permalink (default: True)
             blame: Include git blame info (default: False)
             line_numbers: Show line numbers (default: True)
@@ -108,6 +111,7 @@ class TemplateRenderer:
 
         Examples in templates:
             {{ code('src/file.cpp', function='myFunc') }}
+            {{ code('src/file.cpp', function='onMessage', signature='TMProposeSet') }}
             {{ code('src/file.cpp', struct='MyClass') }}
             {{ code('src/file.cpp', var='errorInfos') }}
             {{ code('src/file.cpp', lines=(10, 20)) }}
@@ -134,7 +138,7 @@ class TemplateRenderer:
                     else:
                         return "❌ **ERROR**: Function marker extraction not supported for this file type"
                 else:
-                    code_text, start_line, end_line = extractor.extract_function(resolved_path, function)
+                    code_text, start_line, end_line = extractor.extract_function(resolved_path, function, signature)
                     logger.info(f"Extracted function '{function}' from {file_path}")
             elif function_macro:
                 # Handle function_macro parameter

@@ -123,7 +123,8 @@ def cli(verbose, debug):
     help="Remap line numbers in dirty files to match committed version (for sharing)",
 )
 @click.option(
-    "-V", "--validate-changes",
+    "-V",
+    "--validate-changes",
     "changes_base",
     default=None,
     metavar="BASE",
@@ -135,8 +136,13 @@ def cli(verbose, debug):
     help="Exit with error code 1 if validation fails (use with -V)",
 )
 def render(
-    input_path, output_path, repo_path, collect_error_fixtures, remap_dirty_lines,
-    changes_base, strict,
+    input_path,
+    output_path,
+    repo_path,
+    collect_error_fixtures,
+    remap_dirty_lines,
+    changes_base,
+    strict,
 ):
     """
     Render Jinja2 templates to markdown.
@@ -252,6 +258,7 @@ def render(
             console.print(f"\n[yellow]⚠ {len(uncovered)} uncovered regions:[/yellow]")
             # Group by file
             from collections import defaultdict
+
             by_file = defaultdict(list)
             for region in uncovered:
                 by_file[region.file_path].append((region.start_line, region.end_line))
@@ -269,7 +276,7 @@ def render(
                     for start, end in ranges:
                         console.print(f"[dim]{start}-{end}:[/dim]")
                         for i in range(start - 1, min(end, len(lines))):
-                            console.print(f"  [dim]{i+1:4}[/dim] {lines[i]}")
+                            console.print(f"  [dim]{i + 1:4}[/dim] {lines[i]}")
                 except Exception as e:
                     console.print(f"  [red]Could not read file: {e}[/red]")
 
@@ -419,12 +426,31 @@ def list_functions():
 @cli.command("ai-guide")
 def ai_guide():
     """Output comprehensive guide for AI assistants."""
-    guide = '''# projected-source AI Guide
+    guide = """# projected-source AI Guide
 
 ## Overview
 projected-source extracts code from C/C++ source files into Jinja2 templates,
 creating documentation that stays in sync with the codebase. Uses tree-sitter
 for accurate parsing.
+
+## IMPORTANT: Prefer Symbolic References
+
+**Always prefer symbolic extraction over markers or line ranges.**
+
+Extraction priority (best to worst):
+1. `function='Name'` - functions, methods (use `signature=` for overloads)
+2. `struct='Name'` / `var='Name'` - types, constants, variables
+3. `function_macro=` / `macro_definition=` - macro-based code
+4. `function='X', marker='Y'` - subsection within a function (when needed)
+5. `marker='X'` - standalone markers (last resort)
+6. `lines=(start, end)` - fragile, breaks when code changes
+
+**Why?** Symbolic refs survive refactoring. If someone renames a function,
+you get a clear error. With line numbers, you silently get wrong code.
+
+**Markers are for:** Extracting a specific subsection of a larger construct,
+e.g., just the initialization part of a 200-line function. Not for extracting
+whole functions - use `function=` for that.
 
 ## CLI Usage
 
@@ -452,6 +478,9 @@ projected-source render docs/ -V auto --strict     # exit 1 if uncovered
 ```jinja
 {# Extract a function #}
 {{ code('src/file.cpp', function='processTransaction') }}
+
+{# Extract overloaded function by signature #}
+{{ code('src/file.cpp', function='onMessage', signature='TMProposeSet') }}
 
 {# Extract a struct/class/enum #}
 {{ code('src/file.h', struct='Config') }}
@@ -538,13 +567,14 @@ Shows uncovered code changes with actual source:
 
 ## Tips for AI Assistants
 
-1. **Always use relative paths** from repo root in code() calls
-2. **Use markers** for documenting specific sections within large functions
-3. **Group related extractions** logically in your documentation
-4. **Use ignore_changes()** at the top of templates for test files, build configs
-5. **Combine function + marker** to extract subsections of large functions
-6. **Check -V output** to ensure all changes are documented
-'''
+1. **Prefer symbolic refs** - Use `function=`, `struct=`, `var=` instead of markers
+2. **Use `signature=` for overloads** - e.g., `function='onMessage', signature='TMProposeSet'`
+3. **Markers only for subsections** - When you need part of a function, not the whole thing
+4. **Never use line ranges** unless absolutely necessary - they break on any edit
+5. **Use relative paths** from repo root in code() calls
+6. **Use ignore_changes()** at the top of templates for test files, build configs
+7. **Check -V output** to ensure all changes are documented
+"""
     click.echo(guide)
 
 

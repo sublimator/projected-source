@@ -26,7 +26,7 @@ class CppExtractor(BaseExtractor):
         self.macro_finder = MacroFinder()
         self.macro_def_finder = MacroDefinitionFinder()
 
-    def extract_function(self, file_path: Path, function_name: str) -> Tuple[str, int, int]:
+    def extract_function(self, file_path: Path, function_name: str, signature: str = None) -> Tuple[str, int, int]:
         """
         Extract a C++ function by name using tree-sitter.
 
@@ -38,23 +38,32 @@ class CppExtractor(BaseExtractor):
         - Namespace + class: "namespace::ClassName::method_name"
         - Nested classes/structs: "OuterClass::InnerClass::method"
 
+        Args:
+            file_path: Path to the source file
+            function_name: Name of the function to extract
+            signature: Optional string to match against parameter types for overload
+                       disambiguation. Use partial type names like "TMProposeSet"
+                       to select a specific overload.
+
         Returns:
             Tuple of (code_text, start_line, end_line)
         """
         source = file_path.read_bytes()
 
         # Use the SimpleCppParser to extract function - returns ExtractionResult
-        result = self.cpp_parser.extract_function_by_name(source, function_name)
+        result = self.cpp_parser.extract_function_by_name(source, function_name, signature)
 
         if not result:
+            if signature:
+                raise ValueError(
+                    f"Function '{function_name}' with signature matching '{signature}' not found in {file_path}"
+                )
             raise ValueError(f"Function '{function_name}' not found in {file_path}")
 
         logger.debug(f"Found function '{function_name}' at {result.location}")
         return result.to_tuple()  # For backwards compatibility
 
-    def _extract_node_marker(
-        self, file_path: Path, result, marker: str, context_name: str
-    ) -> Tuple[str, int, int]:
+    def _extract_node_marker(self, file_path: Path, result, marker: str, context_name: str) -> Tuple[str, int, int]:
         """
         Extract a marked section from within any extracted node.
 

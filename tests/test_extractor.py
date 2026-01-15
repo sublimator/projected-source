@@ -5,8 +5,6 @@ Tests for the extractor module.
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from projected_source.languages.cpp import CppExtractor
 
 

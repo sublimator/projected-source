@@ -38,9 +38,7 @@ class ChangesSet:
         self._regions: Dict[Path, List[Tuple[int, int]]] = {}
 
     @classmethod
-    def from_diff(
-        cls, base: Optional[str] = None, repo_path: Optional[Path] = None
-    ) -> "ChangesSet":
+    def from_diff(cls, base: Optional[str] = None, repo_path: Optional[Path] = None) -> "ChangesSet":
         """
         Build a ChangesSet from git diff against a base commit or range.
 

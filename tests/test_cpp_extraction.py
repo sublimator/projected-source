@@ -4,11 +4,12 @@ Comprehensive test suite for C++ code extraction.
 Tests against a parser interface, not a specific implementation.
 """
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from projected_source.languages.cpp import CppExtractor
 from projected_source.languages.cpp_parser import SimpleCppParser
-from projected_source.languages.cpp_parser_query import QueryBasedCppParser
 
 
 class TestCppParsers:

@@ -4,7 +4,7 @@ Simplified C++ parser using tree-sitter for extracting functions.
 """
 
 import logging
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import tree_sitter_cpp as tscpp
 from tree_sitter import Language, Node, Parser
@@ -373,7 +373,219 @@ class SimpleCppParser:
 
         return find_node(root)
 
-    def extract_function_by_name(self, source_code: bytes, function_name: str) -> Optional[ExtractionResult]:
+    def _find_all_nodes_by_qualified_name(self, source_code: bytes, target_name: str, node_types: list) -> List[Node]:
+        """
+        Find ALL nodes matching a qualified name (for overloaded functions).
+
+        Args:
+            source_code: The C++ source code as bytes
+            target_name: Qualified name to search for
+            node_types: List of node types to match
+
+        Returns:
+            List of matching tree-sitter nodes
+        """
+        tree = self.parser.parse(source_code)
+        root = tree.root_node
+
+        parts = target_name.split("::")
+        target_leaf_name = parts[-1]
+        qualifiers = parts[:-1] if len(parts) > 1 else []
+
+        results: List[Node] = []
+
+        def collect_nodes(node, context_stack=None, depth=0):
+            if context_stack is None:
+                context_stack = []
+
+            # Check for namespace definitions
+            if node.type == "namespace_definition":
+                name_node = node.child_by_field_name("name")
+                namespace_name = None
+                if name_node:
+                    namespace_name = name_node.text.decode("utf8")
+                    if namespace_name.endswith("::"):
+                        namespace_name = namespace_name.rstrip(":")
+
+                if namespace_name and "::" in namespace_name:
+                    new_context = context_stack + namespace_name.split("::")
+                else:
+                    new_context = context_stack + ([namespace_name] if namespace_name else [])
+
+                body = node.child_by_field_name("body")
+                if body and body.type == "declaration_list":
+                    for decl in body.children:
+                        collect_nodes(decl, new_context, depth + 1)
+
+            # Check for class/struct definitions
+            elif node.type in ["class_specifier", "struct_specifier"]:
+                class_name = None
+                for child in node.children:
+                    if child.type == "type_identifier":
+                        class_name = child.text.decode("utf8")
+                        break
+
+                if class_name:
+                    new_context = context_stack + [class_name]
+                    for child in node.children:
+                        if child.type == "field_declaration_list":
+                            for member in child.children:
+                                collect_nodes(member, new_context, depth + 1)
+
+            # Check for function definitions
+            elif node.type == "function_definition" and "function_definition" in node_types:
+                declarator = node.child_by_field_name("declarator")
+                if declarator:
+                    found_name, found_qualifiers = self._extract_function_name_and_qualifiers(declarator, context_stack)
+
+                    if found_name == target_leaf_name:
+                        if self._qualifiers_match(found_qualifiers, qualifiers):
+                            results.append(node)
+
+            # Check for template declarations
+            elif node.type == "template_declaration":
+                for child in node.children:
+                    if child.type == "function_definition":
+                        declarator = child.child_by_field_name("declarator")
+                        if declarator:
+                            found_name, found_qualifiers = self._extract_function_name_and_qualifiers(
+                                declarator, context_stack
+                            )
+                            # Match base name for template functions
+                            base_found = found_name.split("<")[0] if "<" in found_name else found_name
+                            if base_found == target_leaf_name or found_name == target_leaf_name:
+                                if self._qualifiers_match(found_qualifiers, qualifiers):
+                                    results.append(node)
+
+            # Recurse into children
+            for child in node.children:
+                collect_nodes(child, context_stack, depth + 1)
+
+        collect_nodes(root)
+        return results
+
+    def _extract_function_name_and_qualifiers(
+        self, declarator: Node, context_stack: List[str]
+    ) -> Tuple[str, List[str]]:
+        """Extract function name and qualifiers from a declarator node."""
+        found_name = ""
+        found_qualifiers = []
+
+        def extract_operator_name(op_node):
+            parts = []
+            for child in op_node.children:
+                if child.text:
+                    parts.append(child.text.decode("utf8"))
+            return "".join(parts)
+
+        def extract_qualified_parts(qnode):
+            parts = []
+            current_node = qnode
+            while current_node and current_node.type == "qualified_identifier":
+                found_nested = False
+                for child in current_node.children:
+                    if child.type in ["namespace_identifier", "identifier"]:
+                        parts.append(child.text.decode("utf8"))
+                    elif child.type == "template_type":
+                        type_id = None
+                        for tc in child.children:
+                            if tc.type == "type_identifier":
+                                type_id = tc.text.decode("utf8")
+                        if type_id:
+                            parts.append(type_id)
+                    elif child.type == "operator_name":
+                        parts.append(extract_operator_name(child))
+                    elif child.type == "qualified_identifier":
+                        current_node = child
+                        found_nested = True
+                        break
+                if not found_nested:
+                    break
+            return parts
+
+        current = declarator
+        while current:
+            if current.type == "function_declarator":
+                name_node = current.child_by_field_name("declarator")
+                if name_node:
+                    if name_node.type == "qualified_identifier":
+                        all_parts = extract_qualified_parts(name_node)
+                        if all_parts:
+                            found_name = all_parts[-1]
+                            found_qualifiers = all_parts[:-1]
+                    elif name_node.type == "identifier":
+                        found_name = name_node.text.decode("utf8")
+                        found_qualifiers = context_stack
+                    elif name_node.type == "field_identifier":
+                        found_name = name_node.text.decode("utf8")
+                        found_qualifiers = context_stack
+                    elif name_node.type == "operator_name":
+                        found_name = extract_operator_name(name_node)
+                        found_qualifiers = context_stack
+                break
+            elif current.type == "pointer_declarator":
+                current = current.child_by_field_name("declarator")
+            elif current.type == "reference_declarator":
+                func_decl = None
+                for child in current.children:
+                    if child.type == "function_declarator":
+                        func_decl = child
+                        break
+                current = func_decl
+            else:
+                break
+
+        return found_name, found_qualifiers
+
+    def _qualifiers_match(self, found: List[str], target: List[str]) -> bool:
+        """Check if qualifier lists match."""
+        if not target:
+            return True
+        if found == target:
+            return True
+        if len(found) >= len(target) and found[-len(target) :] == target:
+            return True
+        return False
+
+    def _extract_parameter_signature(self, node: Node) -> str:
+        """
+        Extract parameter types from a function definition node.
+
+        Returns a string like "int, std::string const&, TMProposeSet"
+        containing the parameter types (without names).
+        """
+        declarator = node.child_by_field_name("declarator")
+        if not declarator:
+            return ""
+
+        # Navigate to function_declarator
+        current = declarator
+        while current and current.type != "function_declarator":
+            if current.type == "pointer_declarator":
+                current = current.child_by_field_name("declarator")
+            elif current.type == "reference_declarator":
+                for child in current.children:
+                    if child.type == "function_declarator":
+                        current = child
+                        break
+                else:
+                    break
+            else:
+                break
+
+        if not current or current.type != "function_declarator":
+            return ""
+
+        params_node = current.child_by_field_name("parameters")
+        if not params_node:
+            return ""
+
+        # Extract the full parameter list text
+        return params_node.text.decode("utf8")
+
+    def extract_function_by_name(
+        self, source_code: bytes, function_name: str, signature: str = None
+    ) -> Optional[ExtractionResult]:
         """
         Extract a function by name from C++ source code.
         Supports:
@@ -386,12 +598,41 @@ class SimpleCppParser:
         Args:
             source_code: The C++ source code as bytes
             function_name: Name of the function to extract (can include :: for class/namespace)
+            signature: Optional string to match against parameter types for overload disambiguation
 
         Returns:
             ExtractionResult with all the info, or None if not found
         """
-        node = self._find_node_by_qualified_name(source_code, function_name, ["function_definition"])
-        return _node_to_result(node, function_name) if node else None
+        if signature is None:
+            # Original behavior - find first match
+            node = self._find_node_by_qualified_name(source_code, function_name, ["function_definition"])
+            return _node_to_result(node, function_name) if node else None
+
+        # Find all overloads and filter by signature
+        nodes = self._find_all_nodes_by_qualified_name(source_code, function_name, ["function_definition"])
+
+        if not nodes:
+            return None
+
+        # Filter by signature
+        matching = []
+        for node in nodes:
+            param_sig = self._extract_parameter_signature(node)
+            if signature in param_sig:
+                matching.append(node)
+
+        if not matching:
+            # No match - provide helpful error info
+            available = [self._extract_parameter_signature(n) for n in nodes]
+            logger.warning(f"No overload of '{function_name}' matches signature '{signature}'. Available: {available}")
+            return None
+
+        if len(matching) > 1:
+            # Multiple matches - need more specific signature
+            sigs = [self._extract_parameter_signature(n) for n in matching]
+            logger.warning(f"Multiple overloads of '{function_name}' match signature '{signature}': {sigs}")
+
+        return _node_to_result(matching[0], function_name)
 
     def extract_struct_or_class_by_name(self, source_code: bytes, name: str) -> Optional[ExtractionResult]:
         """
