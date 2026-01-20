@@ -166,3 +166,46 @@ class TestOverloadDisambiguation:
         assert any("TMTransaction" in sig for sig in signatures)
         assert any("TMGetLedger" in sig for sig in signatures)
         assert any("TMValidation" in sig for sig in signatures)
+
+
+class TestTemplateVsNonTemplateMarkers:
+    """Test finding markers in non-template when template exists with same name."""
+
+    @pytest.fixture
+    def fixture_file(self):
+        return Path("tests/fixtures/overloads.cpp")
+
+    @pytest.fixture
+    def extractor(self):
+        return CppExtractor()
+
+    def test_marker_in_non_template_overload(self, extractor, fixture_file):
+        """Test that we can find marker in non-template when template version exists."""
+        # invoke_handler has both template and non-template versions
+        # The marker is only in the non-template version
+        text, start, end = extractor.extract_function_marker(fixture_file, "invoke_handler", "special-case")
+
+        assert "case 42:" in text
+        assert "invoke_handler<PeerImp>" in text
+        assert start > 0
+        assert end >= start
+
+    def test_find_both_template_and_non_template(self, extractor, fixture_file):
+        """Test that _find_all_nodes finds both template and non-template versions."""
+        source = fixture_file.read_bytes()
+        nodes = extractor.cpp_parser._find_all_nodes_by_qualified_name(
+            source, "invoke_handler", ["function_definition"]
+        )
+
+        # Should find both versions
+        assert len(nodes) == 2
+
+        # One should be template, one not
+        node_types = [n.type for n in nodes]
+        texts = [n.text.decode("utf8") if n.text else "" for n in nodes]
+
+        # Check we got both versions
+        has_template = any("template" in t for t in texts)
+        has_non_template = any("switch" in t for t in texts)
+        assert has_template, "Should find template version"
+        assert has_non_template, "Should find non-template version"

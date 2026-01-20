@@ -73,3 +73,22 @@ void handleEvent(const std::string& name) {
 void handleEvent(int code, const std::string& message) {
     // Handle with code and message
 }
+
+// Template vs non-template with same name
+template <class T>
+static int invoke_handler(int ctx) {
+    // Template version - no markers here
+    return T::handle(ctx);
+}
+
+// Non-template dispatch version with marker
+static int invoke_handler(int ctx) {
+    switch (ctx) {
+        //@@start special-case
+        case 42:
+            return invoke_handler<PeerImp>(ctx);
+        //@@end special-case
+        default:
+            return -1;
+    }
+}

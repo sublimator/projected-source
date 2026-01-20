@@ -121,14 +121,45 @@ class CppExtractor(BaseExtractor):
         return marker_text, actual_start_line, actual_end_line
 
     def extract_function_marker(self, file_path: Path, function_name: str, marker: str) -> Tuple[str, int, int]:
-        """Extract a marked section from within a function."""
-        source = file_path.read_bytes()
-        result = self.cpp_parser.extract_function_by_name(source, function_name)
+        """Extract a marked section from within a function.
 
-        if not result:
+        When multiple overloads exist (including template vs non-template),
+        searches all of them to find the one containing the marker.
+        """
+        source = file_path.read_bytes()
+
+        # Find ALL functions with this name (handles template vs non-template, overloads)
+        nodes = self.cpp_parser._find_all_nodes_by_qualified_name(source, function_name, ["function_definition"])
+
+        if not nodes:
             raise ValueError(f"Function '{function_name}' not found in {file_path}")
 
-        return self._extract_node_marker(file_path, result, marker, f"function '{function_name}'")
+        # Search each overload for the marker
+        from .extraction_result import ExtractionResult
+
+        for node in nodes:
+            text = node.text.decode("utf8") if node.text else ""
+            result = ExtractionResult(
+                text=text,
+                start_line=node.start_point.row + 1,
+                end_line=node.end_point.row + 1,
+                start_column=node.start_point.column,
+                end_column=node.end_point.column,
+                node=node,
+                node_type=node.type,
+                qualified_name=function_name,
+            )
+
+            # Check if this overload has the marker
+            markers = self.find_markers_in_node(node)
+            if marker in markers:
+                return self._extract_node_marker(file_path, result, marker, f"function '{function_name}'")
+
+        # No overload had the marker
+        raise ValueError(
+            f"Marker '{marker}' not found in any overload of function '{function_name}'. "
+            f"Found {len(nodes)} overload(s) but none contain the marker."
+        )
 
     def extract_struct(self, file_path: Path, struct_name: str) -> Tuple[str, int, int]:
         """
