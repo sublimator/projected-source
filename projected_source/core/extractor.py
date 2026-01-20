@@ -2,6 +2,8 @@
 Tree-sitter based code extraction with comment directive support.
 """
 
+from ..languages.utils import node_text
+
 import logging
 import re
 from pathlib import Path
@@ -71,7 +73,7 @@ class BaseExtractor:
                 if not comment or not comment.text:
                     continue
 
-                text = comment.text.decode("utf8")
+                text = node_text(comment)
                 line_num = comment.start_point.row + 1
 
                 # Check for marker patterns in the comment text
@@ -173,7 +175,7 @@ class MarkerExtractor:
             for _, captures in matches:
                 comments = captures.get("comment", [])
                 for comment in comments:
-                    if comment and comment.text and "//@@" in comment.text.decode("utf8"):
+                    if comment and comment.text and "//@@" in node_text(comment):
                         directive_comments.append(comment)
 
             return directive_comments

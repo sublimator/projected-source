@@ -6,6 +6,8 @@ This is different from macro_finder_v3.py which finds macro USAGES.
 This module finds the actual #define statements themselves.
 """
 
+from .utils import node_text
+
 import logging
 from typing import List, Optional, Tuple, TypedDict
 
@@ -125,13 +127,13 @@ class MacroDefinitionFinder:
             MacroDefinition object
         """
         # Get the full text including backslash continuations
-        full_text = node.text.decode("utf8")
+        full_text = node_text(node)
 
         # Get the macro name
         name_node = node.child_by_field_name("name")
         if not name_node:
             return None
-        name = name_node.text.decode("utf8")
+        name = node_text(name_node)
 
         # Determine if it's a function-like macro
         is_function = node.type == "preproc_function_def"
@@ -139,7 +141,7 @@ class MacroDefinitionFinder:
         if is_function:
             params_node = node.child_by_field_name("parameters")
             if params_node:
-                parameters = params_node.text.decode("utf8")
+                parameters = node_text(params_node)
 
         # Count lines and check for multi-line
         lines = full_text.count("\n") + 1

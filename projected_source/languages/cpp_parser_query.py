@@ -3,6 +3,8 @@
 C++ parser using tree-sitter queries - much cleaner approach.
 """
 
+from .utils import node_text
+
 import logging
 from typing import Optional
 
@@ -163,7 +165,7 @@ class QueryBasedCppParser:
                 if "result" in captures:
                     node = captures["result"][0]
                     return ExtractionResult(
-                        text=node.text.decode("utf8"),
+                        text=node_text(node),
                         start_line=node.start_point.row + 1,
                         end_line=node.end_point.row + 1,
                         start_column=node.start_point.column,
@@ -259,7 +261,7 @@ class QueryBasedCppParser:
                 if "result" in captures:
                     node = captures["result"][0]
                     return ExtractionResult(
-                        text=node.text.decode("utf8"),
+                        text=node_text(node),
                         start_line=node.start_point.row + 1,
                         end_line=node.end_point.row + 1,
                         start_column=node.start_point.column,

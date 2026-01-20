@@ -3,6 +3,8 @@
 Simplified C++ parser using tree-sitter for extracting functions.
 """
 
+from .utils import node_text
+
 import logging
 from typing import List, Optional, Tuple
 
@@ -79,7 +81,7 @@ class SimpleCppParser:
                 namespace_name = None
                 if name_node:
                     # The name field could be different node types
-                    namespace_name = name_node.text.decode("utf8")
+                    namespace_name = node_text(name_node)
                     # Remove trailing :: if present
                     if namespace_name.endswith("::"):
                         namespace_name = namespace_name.rstrip(":")
@@ -107,7 +109,7 @@ class SimpleCppParser:
                 class_name = None
                 for child in node.children:
                     if child.type == "type_identifier":
-                        class_name = child.text.decode("utf8")
+                        class_name = node_text(child)
                         break
 
                 logger.debug(f"{indent}Found {node.type}: {class_name}")
@@ -188,7 +190,7 @@ class SimpleCppParser:
                         parts = []
                         for child in op_node.children:
                             if child.text:
-                                parts.append(child.text.decode("utf8"))
+                                parts.append(node_text(child))
                         return "".join(parts)
 
                     def extract_template_type_name(tt_node):
@@ -197,7 +199,7 @@ class SimpleCppParser:
                         template_args = None
                         for child in tt_node.children:
                             if child.type == "type_identifier":
-                                type_id = child.text.decode("utf8")
+                                type_id = node_text(child)
                             elif child.type == "template_argument_list":
                                 template_args = child.text.decode("utf8")
                         if type_id and template_args:
@@ -218,7 +220,7 @@ class SimpleCppParser:
                             found_nested = False
                             for child in current_node.children:
                                 if child.type in ["namespace_identifier", "identifier"]:
-                                    parts.append(child.text.decode("utf8"))
+                                    parts.append(node_text(child))
                                 elif child.type == "template_type":
                                     # Handle Container<T> in Container<T>::method
                                     parts.append(extract_template_type_name(child))
@@ -249,12 +251,12 @@ class SimpleCppParser:
                                         found_qualifiers = all_parts[:-1]
                                         logger.debug(f"{indent}    Found qualified: {found_qualifiers}::{found_name}")
                                 elif name_node.type == "identifier":
-                                    found_name = name_node.text.decode("utf8")
+                                    found_name = node_text(name_node)
                                     found_qualifiers = context_stack
                                     logger.debug(f"{indent}    Found id: {found_name} ctx={found_qualifiers}")
                                 elif name_node.type == "field_identifier":
                                     # Inline class/struct method
-                                    found_name = name_node.text.decode("utf8")
+                                    found_name = node_text(name_node)
                                     found_qualifiers = context_stack
                                     logger.debug(f"{indent}    Found field_id: {found_name} ctx={found_qualifiers}")
                                 elif name_node.type == "operator_name":
@@ -266,9 +268,9 @@ class SimpleCppParser:
                                     # Template specialization like templateAdd<int>
                                     for child in name_node.children:
                                         if child.type == "identifier":
-                                            base_name = child.text.decode("utf8")
+                                            base_name = node_text(child)
                                         elif child.type == "template_argument_list":
-                                            template_args = child.text.decode("utf8")
+                                            template_args = node_text(child)
                                     # Store both forms for matching
                                     found_name = f"{base_name}{template_args}"
                                     found_qualifiers = context_stack
@@ -277,7 +279,7 @@ class SimpleCppParser:
                                 # Sometimes for inline methods, the name is directly a child
                                 for child in current.children:
                                     if child.type == "field_identifier":
-                                        found_name = child.text.decode("utf8")
+                                        found_name = node_text(child)
                                         found_qualifiers = context_stack
                                         logger.debug(f"{indent}    field_id: {found_name}")
                                         break
@@ -422,7 +424,7 @@ class SimpleCppParser:
                 class_name = None
                 for child in node.children:
                     if child.type == "type_identifier":
-                        class_name = child.text.decode("utf8")
+                        class_name = node_text(child)
                         break
 
                 if class_name:
@@ -475,7 +477,7 @@ class SimpleCppParser:
             parts = []
             for child in op_node.children:
                 if child.text:
-                    parts.append(child.text.decode("utf8"))
+                    parts.append(node_text(child))
             return "".join(parts)
 
         def extract_qualified_parts(qnode):
@@ -485,7 +487,7 @@ class SimpleCppParser:
                 found_nested = False
                 for child in current_node.children:
                     if child.type in ["namespace_identifier", "identifier"]:
-                        parts.append(child.text.decode("utf8"))
+                        parts.append(node_text(child))
                     elif child.type == "template_type":
                         type_id = None
                         for tc in child.children:
@@ -514,10 +516,10 @@ class SimpleCppParser:
                             found_name = all_parts[-1]
                             found_qualifiers = all_parts[:-1]
                     elif name_node.type == "identifier":
-                        found_name = name_node.text.decode("utf8")
+                        found_name = node_text(name_node)
                         found_qualifiers = context_stack
                     elif name_node.type == "field_identifier":
-                        found_name = name_node.text.decode("utf8")
+                        found_name = node_text(name_node)
                         found_qualifiers = context_stack
                     elif name_node.type == "operator_name":
                         found_name = extract_operator_name(name_node)
@@ -581,7 +583,7 @@ class SimpleCppParser:
             return ""
 
         # Extract the full parameter list text
-        return params_node.text.decode("utf8")
+        return node_text(params_node)
 
     def extract_function_by_name(
         self, source_code: bytes, function_name: str, signature: str = None

@@ -4,6 +4,8 @@ Library for finding and extracting C/C++ macros using tree-sitter.
 Version 3: Ultra-DRY implementation with TypedDict and modern patterns.
 """
 
+from .utils import node_text
+
 import logging
 from enum import Enum
 from functools import lru_cache
@@ -170,7 +172,7 @@ class MacroFinder:
         """Build a MacroResult from nodes."""
         # Extract macro name
         if name_node:
-            macro_name = name_node.text.decode("utf8")
+            macro_name = node_text(name_node)
         else:
             # Fallback: extract from macro_node
             macro_name = self._extract_macro_name(macro_node)
@@ -194,7 +196,7 @@ class MacroFinder:
 
     def _extract_text(self, node: Node, full_body: bool = False) -> str:
         """Extract text from node with optional body truncation."""
-        text = node.text.decode("utf8")
+        text = node_text(node)
 
         if not full_body and node.type == "function_definition":
             # Truncate at first brace for function definitions
@@ -209,13 +211,13 @@ class MacroFinder:
         if node.type == "call_expression":
             func_node = node.child_by_field_name("function")
             if func_node:
-                return func_node.text.decode("utf8")
+                return node_text(func_node)
         elif node.type == "function_definition":
             declarator = node.child_by_field_name("declarator")
             if declarator and declarator.type == "function_declarator":
                 func_id = declarator.child_by_field_name("declarator")
                 if func_id:
-                    return func_id.text.decode("utf8")
+                    return node_text(func_id)
         return ""
 
     def _extract_arguments(self, args_node: Optional[Node]) -> List[str]:
@@ -230,11 +232,11 @@ class MacroFinder:
             for child in args_node.children:
                 if child.type == "parameter_declaration":
                     # Extract parameter name (last identifier)
-                    tokens = child.text.decode("utf8").split()
+                    tokens = node_text(child).split()
                     if tokens:
                         args.append(tokens[-1])
                 elif child.type not in ("(", ")", ","):
-                    args.append(child.text.decode("utf8").strip())
+                    args.append(node_text(child).strip())
 
         elif args_node.type == "argument_list":
             # Handle function call arguments
@@ -250,7 +252,7 @@ class MacroFinder:
                     if current_arg:
                         args.append("".join(current_arg).strip())
                 else:
-                    current_arg.append(child.text.decode("utf8"))
+                    current_arg.append(node_text(child))
 
         return args
 
@@ -259,7 +261,7 @@ class MacroFinder:
         if node.type == "call_expression":
             func_node = node.child_by_field_name("function")
             if func_node and func_node.type == "identifier":
-                name = func_node.text.decode("utf8")
+                name = node_text(func_node)
                 if name in names:
                     args_node = node.child_by_field_name("arguments")
                     return self._build_result(node, args_node, func_node)
@@ -269,7 +271,7 @@ class MacroFinder:
             if declarator and declarator.type == "function_declarator":
                 func_id = declarator.child_by_field_name("declarator")
                 if func_id and func_id.type == "identifier":
-                    name = func_id.text.decode("utf8")
+                    name = node_text(func_id)
                     if name in names:
                         params_node = declarator.child_by_field_name("parameters")
                         return self._build_result(node, params_node, func_id)
@@ -290,7 +292,7 @@ class MacroFinder:
 
         for _, captures in matches:
             for comment_node in captures.get("comment", []):
-                text = comment_node.text.decode("utf8")
+                text = node_text(comment_node)
 
                 # Check for start marker
                 if "//@@start" in text:
