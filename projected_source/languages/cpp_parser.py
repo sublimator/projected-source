@@ -458,6 +458,8 @@ class SimpleCppParser:
                             if base_found == target_leaf_name or found_name == target_leaf_name:
                                 if self._qualifiers_match(found_qualifiers, qualifiers):
                                     results.append(node)
+                # Don't recurse into template children - we already handled the function
+                return
 
             # Recurse into children
             for child in node.children:
