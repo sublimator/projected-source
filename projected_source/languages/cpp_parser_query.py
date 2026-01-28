@@ -3,8 +3,6 @@
 C++ parser using tree-sitter queries - much cleaner approach.
 """
 
-from .utils import node_text
-
 import logging
 from typing import Optional
 
@@ -12,6 +10,7 @@ import tree_sitter_cpp as tscpp
 from tree_sitter import Language, Parser, Query, QueryCursor
 
 from .extraction_result import ExtractionResult
+from .utils import node_text
 
 logger = logging.getLogger(__name__)
 

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 def _collect_error_fixture(file_path: Path, error: str, template_context: str = None):
     """Collect a file as a fixture if fixture collection is enabled."""
     # Import here to avoid circular imports
-    from ..cli import get_fixture_collector
+    from ..cli.helpers import get_fixture_collector
 
     collector = get_fixture_collector()
     if collector:

@@ -2,14 +2,14 @@
 Tree-sitter based code extraction with comment directive support.
 """
 
-from ..languages.utils import node_text
-
 import logging
 import re
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 from tree_sitter import Language, Node, Parser, Query, QueryCursor
+
+from ..languages.utils import node_text
 
 logger = logging.getLogger(__name__)
 

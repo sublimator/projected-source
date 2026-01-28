@@ -3,8 +3,6 @@
 Simplified C++ parser using tree-sitter for extracting functions.
 """
 
-from .utils import node_text
-
 import logging
 from typing import List, Optional, Tuple
 
@@ -12,6 +10,7 @@ import tree_sitter_cpp as tscpp
 from tree_sitter import Language, Node, Parser
 
 from .extraction_result import ExtractionResult
+from .utils import node_text
 
 
 def _node_to_result(node: Node, qualified_name: str) -> ExtractionResult:

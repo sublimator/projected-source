@@ -1,114 +1,20 @@
 """
-Command-line interface for projected-source.
+Render command for processing Jinja2 templates.
 """
 
-import json
-import logging
-import shutil
 import sys
-from datetime import datetime
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Optional
 
 import click
-from rich.console import Console
-from rich.table import Table
 
-from . import setup_logging
-from .core.changes_set import ChangesSet
-from .core.renderer import TemplateRenderer
-
-logger = logging.getLogger(__name__)
-console = Console()
-
-# Global fixture collector for error collection mode
-_fixture_collector = None
+from ..core.changes_set import ChangesSet
+from ..core.renderer import TemplateRenderer
+from .helpers import FixtureCollector, console, get_fixture_collector, set_fixture_collector
 
 
-class FixtureCollector:
-    """Collects error-causing files as test fixtures."""
-
-    def __init__(self, output_dir: Path):
-        self.output_dir = output_dir
-        self.errors: List[Dict[str, Any]] = []
-        self.copied_files: Set[Path] = set()
-
-    def collect(self, source_file: Path, error: str, template_context: str = None):
-        """
-        Collect a file that caused an error.
-
-        Args:
-            source_file: Path to the file that caused the error
-            error: Error message
-            template_context: Template that triggered the error
-        """
-        if not source_file.exists():
-            return
-
-        # Create a unique fixture name
-        fixture_name = source_file.name
-        fixture_path = self.output_dir / fixture_name
-
-        # Handle duplicates by adding a suffix
-        counter = 1
-        while fixture_path.exists() and source_file not in self.copied_files:
-            stem = source_file.stem
-            suffix = source_file.suffix
-            fixture_path = self.output_dir / f"{stem}_{counter}{suffix}"
-            counter += 1
-
-        # Copy the file if not already copied
-        if source_file not in self.copied_files:
-            self.output_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_file, fixture_path)
-            self.copied_files.add(source_file)
-
-        self.errors.append(
-            {
-                "source_file": str(source_file),
-                "fixture_file": fixture_path.name,
-                "error": error,
-                "template_context": template_context,
-            }
-        )
-
-    def write_manifest(self):
-        """Write manifest.json with all collected errors."""
-        if not self.errors:
-            return
-
-        manifest = {
-            "collected_at": datetime.now().isoformat(),
-            "error_count": len(self.errors),
-            "unique_files": len(self.copied_files),
-            "errors": self.errors,
-        }
-
-        manifest_path = self.output_dir / "manifest.json"
-        manifest_path.write_text(json.dumps(manifest, indent=2))
-
-        return manifest_path
-
-
-def get_fixture_collector():
-    """Get the global fixture collector if in collection mode."""
-    return _fixture_collector
-
-
-@click.group()
-@click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
-@click.option("--debug", "-d", is_flag=True, help="Enable debug logging")
-def cli(verbose, debug):
-    """Extract and project source code into documentation."""
-    if debug:
-        setup_logging(logging.DEBUG)
-    elif verbose:
-        setup_logging(logging.INFO)
-    else:
-        setup_logging(logging.WARNING)
-
-
-@cli.command()
+@click.command()
 @click.argument("input_path", type=click.Path(path_type=Path))
 @click.argument("output_path", type=click.Path(path_type=Path), required=False)
 @click.option(
@@ -164,14 +70,12 @@ def render(
         echo "{{ code('file.cpp', function='main') }}" | projected-source render - -
         cat template.j2 | projected-source render -      # Output to stdout
     """
-    global _fixture_collector
-
     # Set up fixture collection if requested
     if collect_error_fixtures:
         # Find the projected-source package directory
-        package_dir = Path(__file__).parent.parent
+        package_dir = Path(__file__).parent.parent.parent
         fixtures_dir = package_dir / "tests" / "fixtures" / "collected"
-        _fixture_collector = FixtureCollector(fixtures_dir)
+        set_fixture_collector(FixtureCollector(fixtures_dir))
         console.print(f"[yellow]Fixture collection enabled → {fixtures_dir}[/yellow]")
 
     # Check for stdin input
@@ -257,8 +161,6 @@ def render(
         if uncovered:
             console.print(f"\n[yellow]⚠ {len(uncovered)} uncovered regions:[/yellow]")
             # Group by file
-            from collections import defaultdict
-
             by_file = defaultdict(list)
             for region in uncovered:
                 by_file[region.file_path].append((region.start_line, region.end_line))
@@ -287,15 +189,17 @@ def render(
             console.print("[green]✓ All changes documented[/green]")
 
     # Finalize fixture collection
-    if _fixture_collector:
-        manifest_path = _fixture_collector.write_manifest()
+    collector = get_fixture_collector()
+    if collector:
+        manifest_path = collector.write_manifest()
         if manifest_path:
             console.print(
-                f"\n[yellow]Collected {len(_fixture_collector.errors)} errors "
-                f"({len(_fixture_collector.copied_files)} files) → {manifest_path}[/yellow]"
+                f"\n[yellow]Collected {len(collector.errors)} errors "
+                f"({len(collector.copied_files)} files) → {manifest_path}[/yellow]"
             )
         else:
             console.print("[green]No errors to collect[/green]")
+        set_fixture_collector(None)
 
 
 def _render_stdin(output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None):
@@ -404,184 +308,3 @@ def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False,
         for template, error in failed:
             console.print(f"    • {template}: {error}")
         sys.exit(1)
-
-
-@cli.command()
-def list_functions():
-    """List available extraction functions."""
-    table = Table(title="Available Extraction Functions")
-    table.add_column("Function", style="cyan")
-    table.add_column("Description", style="green")
-
-    table.add_row("code()", "Universal code extraction function")
-    table.add_row("  function=", "Extract a function by name")
-    table.add_row("  function_macro=", "Extract function defined by macro")
-    table.add_row("  macro_definition=", "Extract macro definition (#define)")
-    table.add_row("  marker=", "Extract between comment markers")
-    table.add_row("  lines=", "Extract specific line range")
-
-    console.print(table)
-
-
-@cli.command("ai-guide")
-def ai_guide():
-    """Output comprehensive guide for AI assistants."""
-    guide = """# projected-source AI Guide
-
-## Overview
-projected-source extracts code from C/C++ source files into Jinja2 templates,
-creating documentation that stays in sync with the codebase. Uses tree-sitter
-for accurate parsing.
-
-## IMPORTANT: Prefer Symbolic References
-
-**Always prefer symbolic extraction over markers or line ranges.**
-
-Extraction priority (best to worst):
-1. `function='Name'` - functions, methods (use `signature=` for overloads)
-2. `struct='Name'` / `var='Name'` - types, constants, variables
-3. `function_macro=` / `macro_definition=` - macro-based code
-4. `function='X', marker='Y'` - subsection within a function (when needed)
-5. `marker='X'` - standalone markers (last resort)
-6. `lines=(start, end)` - fragile, breaks when code changes
-
-**Why?** Symbolic refs survive refactoring. If someone renames a function,
-you get a clear error. With line numbers, you silently get wrong code.
-
-**Markers are for:** Extracting a specific subsection of a larger construct,
-e.g., just the initialization part of a 200-line function. Not for extracting
-whole functions - use `function=` for that.
-
-## CLI Usage
-
-```bash
-# Render a single template
-projected-source render template.md.j2
-
-# Render to specific output
-projected-source render template.md.j2 output.md
-
-# Render directory of templates
-projected-source render docs/
-
-# Validate documentation covers code changes
-projected-source render docs/ -V auto              # auto-detect base
-projected-source render docs/ -V origin/main       # specific base
-projected-source render docs/ -V HEAD~5..HEAD~2    # commit range
-projected-source render docs/ -V auto --strict     # exit 1 if uncovered
-```
-
-## Template Functions
-
-### code() - Extract code with GitHub permalinks
-
-```jinja
-{# Extract a function #}
-{{ code('src/file.cpp', function='processTransaction') }}
-
-{# Extract overloaded function by signature #}
-{{ code('src/file.cpp', function='onMessage', signature='TMProposeSet') }}
-
-{# Extract a struct/class/enum #}
-{{ code('src/file.h', struct='Config') }}
-
-{# Extract a variable/constant declaration #}
-{{ code('src/file.cpp', var='errorCodes') }}
-
-{# Extract lines by range #}
-{{ code('src/file.cpp', lines=(10, 50)) }}
-
-{# Extract between markers #}
-{{ code('src/file.cpp', marker='example-usage') }}
-{# In source: //@@start example-usage ... //@@end example-usage #}
-
-{# Extract marker within a function #}
-{{ code('src/file.cpp', function='main', marker='init-section') }}
-
-{# Extract macro-defined function #}
-{{ code('src/file.cpp', function_macro={'name': 'DEFINE_HANDLER', 'arg0': 'onConnect'}) }}
-
-{# Extract macro definition #}
-{{ code('src/file.h', macro_definition='MAX_BUFFER_SIZE') }}
-
-{# Options #}
-{{ code('src/file.cpp', function='foo', github=False) }}      {# no permalink #}
-{{ code('src/file.cpp', function='foo', line_numbers=False) }} {# no line nums #}
-{{ code('src/file.cpp', function='foo', blame=True) }}         {# git blame #}
-{{ code('src/file.cpp', function='foo', language='cpp') }}     {# force language #}
-```
-
-### ignore_changes() - Exclude regions from validation
-
-When using `-V` to validate documentation coverage, use `ignore_changes()` to
-exclude files or regions that don't need documentation:
-
-```jinja
-{# Ignore entire file #}
-{{ ignore_changes('Builds/CMake/config.cmake') }}
-
-{# Ignore specific constructs (same syntax as code()) #}
-{{ ignore_changes('src/file.cpp', function='internalHelper') }}
-{{ ignore_changes('src/file.cpp', struct='PrivateImpl') }}
-{{ ignore_changes('src/file.cpp', lines=(1, 100)) }}
-{{ ignore_changes('src/test/Test.cpp') }}  {# ignore test files #}
-```
-
-## Marker Syntax in Source Files
-
-```cpp
-//@@start section-name
-code here
-//@@end section-name
-```
-
-## Output Format
-
-code() outputs markdown with:
-1. GitHub permalink header (clickable link to source)
-2. Fenced code block with syntax highlighting
-3. Line numbers matching the source file
-
-Example output:
-```
-📍 [`src/main.cpp:42-58`](https://github.com/org/repo/blob/abc123/src/main.cpp#L42-L58)
-```cpp
-  42 void processTransaction() {
-  43     // implementation
-  44 }
-```
-
-## Validation Mode (-V)
-
-Shows uncovered code changes with actual source:
-
-```
-⚠ 3 uncovered regions:
-
-━━━ src/handlers/Submit.cpp ━━━
-230-261:
-   230 void handleSubmit() {
-   231     // new code not documented
-   ...
-```
-
-## Tips for AI Assistants
-
-1. **Prefer symbolic refs** - Use `function=`, `struct=`, `var=` instead of markers
-2. **Use `signature=` for overloads** - e.g., `function='onMessage', signature='TMProposeSet'`
-3. **Markers only for subsections** - When you need part of a function, not the whole thing
-4. **Never use line ranges** unless absolutely necessary - they break on any edit
-5. **Use relative paths** from repo root in code() calls
-6. **Use ignore_changes()** at the top of templates for test files, build configs
-7. **Check -V output** to ensure all changes are documented
-"""
-    click.echo(guide)
-
-
-def main():
-    """Main entry point for the CLI."""
-    cli()
-
-
-if __name__ == "__main__":
-    main()

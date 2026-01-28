@@ -4,8 +4,6 @@ Library for finding and extracting C/C++ macros using tree-sitter.
 Version 3: Ultra-DRY implementation with TypedDict and modern patterns.
 """
 
-from .utils import node_text
-
 import logging
 from enum import Enum
 from functools import lru_cache
@@ -13,6 +11,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict
 
 import tree_sitter_cpp as tscpp
 from tree_sitter import Language, Node, Parser, Query, QueryCursor
+
+from .utils import node_text
 
 logger = logging.getLogger(__name__)
 

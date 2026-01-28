@@ -6,13 +6,13 @@ This is different from macro_finder_v3.py which finds macro USAGES.
 This module finds the actual #define statements themselves.
 """
 
-from .utils import node_text
-
 import logging
 from typing import List, Optional, Tuple, TypedDict
 
 import tree_sitter_cpp as tscpp
 from tree_sitter import Language, Node, Parser, Query, QueryCursor
+
+from .utils import node_text
 
 logger = logging.getLogger(__name__)
 
