@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 from .cpp import CppExtractor
+from .proto import ProtoExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ EXTRACTORS = {
     ".h++": CppExtractor,
     ".c": CppExtractor,  # C is close enough to C++ for our purposes
     ".ipp": CppExtractor,  # Inline implementation files
+    ".proto": ProtoExtractor,  # Protocol Buffers
 }
 
 

@@ -82,6 +82,9 @@ class TemplateRenderer:
         lines: Tuple[int, int] = None,
         marker: str = None,
         signature: str = None,
+        message: str = None,
+        enum: str = None,
+        service: str = None,
         github: bool = True,
         blame: bool = False,
         line_numbers: bool = True,
@@ -101,6 +104,9 @@ class TemplateRenderer:
             marker: Marker name to extract between //@@start and //@@end
             signature: String to match against parameter types for overload disambiguation.
                        Use partial type names like "TMProposeSet" to select a specific overload.
+            message: Message name to extract (protobuf)
+            enum: Enum name to extract (protobuf)
+            service: Service name to extract (protobuf)
             github: Include GitHub permalink (default: True)
             blame: Include git blame info (default: False)
             line_numbers: Show line numbers (default: True)
@@ -116,6 +122,8 @@ class TemplateRenderer:
             {{ code('src/file.cpp', var='errorInfos') }}
             {{ code('src/file.cpp', lines=(10, 20)) }}
             {{ code('src/file.cpp', marker='example1') }}
+            {{ code('src/proto/file.proto', message='MyMessage') }}
+            {{ code('src/proto/file.proto', enum='MyEnum') }}
         """
         try:
             # Resolve file path relative to repo
@@ -179,6 +187,33 @@ class TemplateRenderer:
                         logger.info(f"Extracted {kind} '{name}' from {file_path}")
                 else:
                     return f"❌ **ERROR**: {kind.capitalize()} extraction not supported for this file type"
+            elif message:
+                # Extract protobuf message
+                if hasattr(extractor, "extract_message"):
+                    if marker:
+                        code_text, start_line, end_line = extractor.extract_message_marker(
+                            resolved_path, message, marker
+                        )
+                        logger.info(f"Extracted marker '{marker}' from message '{message}' in {file_path}")
+                    else:
+                        code_text, start_line, end_line = extractor.extract_message(resolved_path, message)
+                        logger.info(f"Extracted message '{message}' from {file_path}")
+                else:
+                    return "❌ **ERROR**: Message extraction not supported for this file type"
+            elif enum:
+                # Extract protobuf enum
+                if hasattr(extractor, "extract_enum"):
+                    code_text, start_line, end_line = extractor.extract_enum(resolved_path, enum)
+                    logger.info(f"Extracted enum '{enum}' from {file_path}")
+                else:
+                    return "❌ **ERROR**: Enum extraction not supported for this file type"
+            elif service:
+                # Extract protobuf service
+                if hasattr(extractor, "extract_service"):
+                    code_text, start_line, end_line = extractor.extract_service(resolved_path, service)
+                    logger.info(f"Extracted service '{service}' from {file_path}")
+                else:
+                    return "❌ **ERROR**: Service extraction not supported for this file type"
             elif marker:
                 code_text, start_line, end_line = extractor.extract_marker(resolved_path, marker)
                 logger.info(f"Extracted marker '{marker}' from {file_path}")
@@ -241,6 +276,7 @@ class TemplateRenderer:
                     ".java": "java",
                     ".rs": "rust",
                     ".go": "go",
+                    ".proto": "protobuf",
                 }
                 language = language_map.get(suffix, "text")
 
