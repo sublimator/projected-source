@@ -168,6 +168,144 @@ class TestOverloadDisambiguation:
         assert any("TMValidation" in sig for sig in signatures)
 
 
+class TestTemplateFunctionSignatures:
+    """Test signature extraction from template functions."""
+
+    @pytest.fixture
+    def header_file(self):
+        return Path("tests/fixtures/class_methods.h")
+
+    @pytest.fixture
+    def parser(self):
+        return SimpleCppParser()
+
+    def test_template_function_signatures_extracted(self, parser, header_file):
+        """Test that template function signatures are not empty."""
+        source = header_file.read_bytes()
+        nodes = parser._find_all_nodes_by_qualified_name(source, "inUNLReport", ["function_definition"])
+
+        # Should find 2 overloads
+        assert len(nodes) == 2
+
+        # Signatures should NOT be empty (this was the bug)
+        signatures = [parser._extract_parameter_signature(n) for n in nodes]
+        assert all(sig != "" for sig in signatures), f"Got empty signatures: {signatures}"
+
+    def test_template_function_disambiguate_by_signature(self, parser, header_file):
+        """Test disambiguating template function overloads by signature."""
+        source = header_file.read_bytes()
+
+        # Extract by AccountID signature
+        result = parser.extract_function_by_name(source, "inUNLReport", signature="AccountID")
+        assert result is not None
+        assert "AccountID" in result.text
+
+        # Extract by PublicKey signature
+        result = parser.extract_function_by_name(source, "inUNLReport", signature="PublicKey")
+        assert result is not None
+        assert "PublicKey" in result.text
+        assert "Application" in result.text  # Second overload also has Application
+
+    def test_template_declaration_returns_template_node(self, parser, header_file):
+        """Test that we return the template_declaration node, not inner function_definition."""
+        source = header_file.read_bytes()
+        nodes = parser._find_all_nodes_by_qualified_name(source, "inUNLReport", ["function_definition"])
+
+        # All nodes should be template_declaration
+        for node in nodes:
+            assert node.type == "template_declaration", f"Expected template_declaration, got {node.type}"
+
+
+class TestClassMethodDeclarations:
+    """Test extraction of class method declarations from headers."""
+
+    @pytest.fixture
+    def header_file(self):
+        return Path("tests/fixtures/class_methods.h")
+
+    @pytest.fixture
+    def parser(self):
+        return SimpleCppParser()
+
+    @pytest.fixture
+    def extractor(self):
+        return CppExtractor()
+
+    def test_find_method_declaration_by_simple_name(self, parser, header_file):
+        """Test finding method by simple name (without class qualifier)."""
+        source = header_file.read_bytes()
+        nodes = parser._find_all_nodes_by_qualified_name(source, "addProposal", ["function_definition"])
+
+        # Should find exactly 1
+        assert len(nodes) == 1
+        assert nodes[0].type == "field_declaration"
+
+    def test_find_method_declaration_by_qualified_name(self, parser, header_file):
+        """Test finding method by qualified name (ClassName::method)."""
+        source = header_file.read_bytes()
+        nodes = parser._find_all_nodes_by_qualified_name(source, "ShuffleService::addProposal", ["function_definition"])
+
+        assert len(nodes) == 1
+
+    def test_field_declaration_signature_extraction(self, parser, header_file):
+        """Test that signatures can be extracted from field_declaration nodes."""
+        source = header_file.read_bytes()
+        nodes = parser._find_all_nodes_by_qualified_name(source, "addProposal", ["function_definition"])
+
+        assert len(nodes) == 1
+        sig = parser._extract_parameter_signature(nodes[0])
+
+        # Signature should contain the parameter types
+        assert "prevLedger" in sig
+        assert "txSetHash" in sig
+        assert "signingPubKey" in sig
+
+    def test_disambiguate_overloaded_class_methods(self, parser, header_file):
+        """Test disambiguating overloaded class method declarations."""
+        source = header_file.read_bytes()
+
+        # computeCombinedEntropy has two overloads
+        nodes = parser._find_all_nodes_by_qualified_name(source, "computeCombinedEntropy", ["function_definition"])
+        assert len(nodes) == 2
+
+        # Extract const member version
+        result = parser.extract_function_by_name(source, "computeCombinedEntropy", signature="Digest const&")
+        assert result is not None
+        assert "optional" in result.text
+
+        # Extract static version with vector
+        result = parser.extract_function_by_name(source, "computeCombinedEntropy", signature="vector")
+        assert result is not None
+        assert "contributions" in result.text
+
+    def test_find_multiple_methods_same_class(self, parser, header_file):
+        """Test finding multiple different methods from same class."""
+        source = header_file.read_bytes()
+
+        methods = ["addProposal", "getProposals", "proposalCount", "reset"]
+        for method in methods:
+            nodes = parser._find_all_nodes_by_qualified_name(source, method, ["function_definition"])
+            assert len(nodes) >= 1, f"Method {method} not found"
+
+    def test_extract_function_without_signature(self, parser, header_file):
+        """Test that extract_function_by_name works without signature for class methods."""
+        source = header_file.read_bytes()
+
+        # This uses _find_node_by_qualified_name (singular) internally
+        result = parser.extract_function_by_name(source, "addProposal")
+        assert result is not None
+        assert "addProposal" in result.text
+        assert "prevLedger" in result.text
+
+    def test_extract_function_with_qualified_name_no_signature(self, parser, header_file):
+        """Test extract_function_by_name with qualified name but no signature."""
+        source = header_file.read_bytes()
+
+        result = parser.extract_function_by_name(source, "ShuffleService::addProposal")
+        assert result is not None
+        assert "addProposal" in result.text
+
+
 class TestTemplateVsNonTemplateMarkers:
     """Test finding markers in non-template when template exists with same name."""
 

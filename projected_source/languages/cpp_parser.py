@@ -349,6 +349,20 @@ class SimpleCppParser:
                                 return node
                         logger.info(f"{indent}  No match - qualifiers don't match")
 
+            # Check for field declarations (class method declarations in headers)
+            elif node.type == "field_declaration" and "function_definition" in node_types:
+                # field_declaration can contain a function_declarator for method declarations
+                declarator = node.child_by_field_name("declarator")
+                if declarator and declarator.type == "function_declarator":
+                    found_name, found_qualifiers = self._extract_function_name_and_qualifiers(declarator, context_stack)
+                    if found_name == target_leaf_name:
+                        if not qualifiers:
+                            logger.info(f"{indent}  MATCH FOUND (no qualifiers required)")
+                            return node
+                        elif self._qualifiers_match(found_qualifiers, qualifiers):
+                            logger.info(f"{indent}  MATCH FOUND (qualifier match)")
+                            return node
+
             # Check for template declarations
             elif node.type == "template_declaration":
                 logger.debug(f"{indent}Found template_declaration")
@@ -417,6 +431,8 @@ class SimpleCppParser:
                 if body and body.type == "declaration_list":
                     for decl in body.children:
                         collect_nodes(decl, new_context, depth + 1)
+                # Don't recurse via generic recursion - we already handled body with proper context
+                return
 
             # Check for class/struct definitions
             elif node.type in ["class_specifier", "struct_specifier"]:
@@ -432,11 +448,25 @@ class SimpleCppParser:
                         if child.type == "field_declaration_list":
                             for member in child.children:
                                 collect_nodes(member, new_context, depth + 1)
+                # Don't recurse into class children via generic recursion -
+                # we already handled members with proper class context above
+                return
 
             # Check for function definitions
             elif node.type == "function_definition" and "function_definition" in node_types:
                 declarator = node.child_by_field_name("declarator")
                 if declarator:
+                    found_name, found_qualifiers = self._extract_function_name_and_qualifiers(declarator, context_stack)
+
+                    if found_name == target_leaf_name:
+                        if self._qualifiers_match(found_qualifiers, qualifiers):
+                            results.append(node)
+
+            # Check for field declarations (class method declarations in headers)
+            elif node.type == "field_declaration" and "function_definition" in node_types:
+                # field_declaration can contain a function_declarator for method declarations
+                declarator = node.child_by_field_name("declarator")
+                if declarator and declarator.type == "function_declarator":
                     found_name, found_qualifiers = self._extract_function_name_and_qualifiers(declarator, context_stack)
 
                     if found_name == target_leaf_name:
@@ -552,12 +582,30 @@ class SimpleCppParser:
 
     def _extract_parameter_signature(self, node: Node) -> str:
         """
-        Extract parameter types from a function definition node.
+        Extract parameter types from a function definition or field_declaration node.
 
         Returns a string like "int, std::string const&, TMProposeSet"
         containing the parameter types (without names).
         """
-        declarator = node.child_by_field_name("declarator")
+        # Handle template_declaration by descending to inner function_definition
+        target_node = node
+        if node.type == "template_declaration":
+            for child in node.children:
+                if child.type == "function_definition":
+                    target_node = child
+                    break
+
+        # Handle field_declaration (class method declarations in headers)
+        # These don't have a "declarator" field - function_declarator is a direct child
+        if target_node.type == "field_declaration":
+            for child in target_node.children:
+                if child.type == "function_declarator":
+                    params_node = child.child_by_field_name("parameters")
+                    if params_node:
+                        return node_text(params_node)
+            return ""
+
+        declarator = target_node.child_by_field_name("declarator")
         if not declarator:
             return ""
 
