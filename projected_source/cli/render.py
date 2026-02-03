@@ -2,8 +2,12 @@
 Render command for processing Jinja2 templates.
 """
 
+import shutil
+import subprocess
 import sys
+import tempfile
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -12,6 +16,44 @@ import click
 from ..core.changes_set import ChangesSet
 from ..core.renderer import TemplateRenderer
 from .helpers import FixtureCollector, console, get_fixture_collector, set_fixture_collector
+
+
+@contextmanager
+def git_worktree_at_commit(repo_path: Path, commit: str):
+    """
+    Create a temporary git worktree at the specified commit.
+
+    Yields the path to the worktree directory.
+    Cleans up the worktree on exit.
+    """
+    # Create temp directory for worktree
+    tmpdir = tempfile.mkdtemp(prefix="projected-source-")
+    worktree_path = Path(tmpdir)
+
+    try:
+        # Add worktree at the specified commit (detached HEAD)
+        result = subprocess.run(
+            ["git", "worktree", "add", "--detach", str(worktree_path), commit],
+            capture_output=True,
+            cwd=repo_path,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to create worktree: {result.stderr}")
+
+        console.print(f"[cyan]Using commit: {commit}[/cyan]")
+        yield worktree_path
+
+    finally:
+        # Remove the worktree
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", str(worktree_path)],
+            capture_output=True,
+            cwd=repo_path,
+        )
+        # Clean up temp directory if it still exists
+        if worktree_path.exists():
+            shutil.rmtree(worktree_path, ignore_errors=True)
 
 
 @click.command()
@@ -41,6 +83,13 @@ from .helpers import FixtureCollector, console, get_fixture_collector, set_fixtu
     is_flag=True,
     help="Exit with error code 1 if validation fails (use with -V)",
 )
+@click.option(
+    "--commit",
+    "-c",
+    type=str,
+    default=None,
+    help="Render against a specific commit/branch/tag instead of working directory",
+)
 def render(
     input_path,
     output_path,
@@ -49,6 +98,7 @@ def render(
     remap_dirty_lines,
     changes_base,
     strict,
+    commit,
 ):
     """
     Render Jinja2 templates to markdown.
@@ -69,6 +119,10 @@ def render(
         projected-source render templates/ docs/         # Output to docs/
         echo "{{ code('file.cpp', function='main') }}" | projected-source render - -
         cat template.j2 | projected-source render -      # Output to stdout
+
+        # Render against a specific commit/branch
+        projected-source render docs/ --commit v1.0.0
+        projected-source render docs/ -c origin/main
     """
     # Set up fixture collection if requested
     if collect_error_fixtures:
@@ -130,30 +184,41 @@ def render(
         console.print("[red]✗ Input and output types must match (both files or both directories)[/red]")
         sys.exit(1)
 
-    # Set up ChangesSet for validation if requested (-V / --validate-changes)
-    changes_set: Optional[ChangesSet] = None
-    if changes_base:
-        # "auto" means auto-detect base
-        base = None if changes_base == "auto" else changes_base
-        try:
-            changes_set = ChangesSet.from_diff(base=base, repo_path=repo_path)
-            if base and ".." in base:
-                range_display = base
-            else:
-                detected = ChangesSet.detect_base(repo_path) if base is None else base
-                range_display = f"{detected[:12]}..HEAD"
-            console.print(f"[cyan]Validating changes: {range_display}[/cyan]")
-        except RuntimeError as e:
-            console.print(f"[red]✗ Failed to get diff: {e}[/red]")
-            sys.exit(1)
+    # Helper to do the actual rendering
+    def do_render(effective_repo_path: Path):
+        # Set up ChangesSet for validation if requested (-V / --validate-changes)
+        changes_set: Optional[ChangesSet] = None
+        if changes_base:
+            # "auto" means auto-detect base
+            base = None if changes_base == "auto" else changes_base
+            try:
+                changes_set = ChangesSet.from_diff(base=base, repo_path=effective_repo_path)
+                if base and ".." in base:
+                    range_display = base
+                else:
+                    detected = ChangesSet.detect_base(effective_repo_path) if base is None else base
+                    range_display = f"{detected[:12]}..HEAD"
+                console.print(f"[cyan]Validating changes: {range_display}[/cyan]")
+            except RuntimeError as e:
+                console.print(f"[red]✗ Failed to get diff: {e}[/red]")
+                sys.exit(1)
 
-    # Process based on input type
-    if input_is_stdin:
-        _render_stdin(output_path, repo_path, output_to_stdout, remap_dirty_lines, changes_set)
-    elif input_is_dir:
-        _render_directory(input_path, output_path, repo_path, remap_dirty_lines, changes_set)
+        # Process based on input type
+        if input_is_stdin:
+            _render_stdin(output_path, effective_repo_path, output_to_stdout, remap_dirty_lines, changes_set)
+        elif input_is_dir:
+            _render_directory(input_path, output_path, effective_repo_path, remap_dirty_lines, changes_set)
+        else:
+            _render_file(input_path, output_path, effective_repo_path, output_to_stdout, remap_dirty_lines, changes_set)
+
+        return changes_set
+
+    # Render - either against working directory or a specific commit
+    if commit:
+        with git_worktree_at_commit(repo_path, commit) as worktree_path:
+            changes_set = do_render(worktree_path)
     else:
-        _render_file(input_path, output_path, repo_path, output_to_stdout, remap_dirty_lines, changes_set)
+        changes_set = do_render(repo_path)
 
     # Report validation results
     if changes_set is not None:
