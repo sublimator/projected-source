@@ -536,7 +536,7 @@ class SimpleCppParser:
                     break
             return parts
 
-        current = declarator
+        current: Optional[Node] = declarator
         while current:
             if current.type == "function_declarator":
                 name_node = current.child_by_field_name("declarator")
@@ -610,7 +610,7 @@ class SimpleCppParser:
             return ""
 
         # Navigate to function_declarator
-        current = declarator
+        current: Optional[Node] = declarator
         while current and current.type != "function_declarator":
             if current.type == "pointer_declarator":
                 current = current.child_by_field_name("declarator")

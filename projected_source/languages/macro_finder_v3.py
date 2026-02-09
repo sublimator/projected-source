@@ -168,7 +168,9 @@ class MacroFinder:
 
         return results
 
-    def _build_result(self, macro_node: Node, args_node: Node, name_node: Optional[Node] = None) -> MacroResult:
+    def _build_result(
+        self, macro_node: Node, args_node: Optional[Node], name_node: Optional[Node] = None
+    ) -> MacroResult:
         """Build a MacroResult from nodes."""
         # Extract macro name
         if name_node:
@@ -240,7 +242,7 @@ class MacroFinder:
 
         elif args_node.type == "argument_list":
             # Handle function call arguments
-            current_arg = []
+            current_arg: list[str] = []
             for child in args_node.children:
                 if child.type == "(":
                     continue
@@ -280,15 +282,15 @@ class MacroFinder:
 
     def find_markers_in_node(self, node: Node) -> Dict[str, Tuple[int, int]]:
         """Find comment markers within a node."""
-        markers = {}
+        markers: Dict[str, Tuple[int, int]] = {}
 
         # Query for comments
         comment_query = Query(self.language, "(comment) @comment")
         cursor = QueryCursor(comment_query)
         matches = cursor.matches(node)
 
-        current_marker = None
-        start_line = None
+        current_marker: Optional[str] = None
+        start_line: Optional[int] = None
 
         for _, captures in matches:
             for comment_node in captures.get("comment", []):
@@ -303,7 +305,7 @@ class MacroFinder:
                         start_line = comment_node.start_point.row + 1
 
                 # Check for end marker
-                elif "//@@end" in text and current_marker:
+                elif "//@@end" in text and current_marker and start_line is not None:
                     parts = text.split("//@@end")
                     if len(parts) > 1:
                         end_marker = parts[1].strip()
@@ -350,6 +352,8 @@ class MacroFinder:
         result = results[0]
 
         # Now find markers within this node
+        if result["node"] is None:
+            raise ValueError(f"Macro {name} has no associated node")
         markers = self.find_markers_in_node(result["node"])
 
         return {"macro": result, "markers": markers}
