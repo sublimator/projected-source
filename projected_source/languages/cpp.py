@@ -4,7 +4,7 @@ C++ specific code extraction using tree-sitter.
 
 import logging
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import tree_sitter_cpp as tscpp
 from tree_sitter import Language, Node, Query, QueryCursor
@@ -324,6 +324,25 @@ class CppExtractor(BaseExtractor):
 
         logger.debug(f"Found macro definition '{macro_name}' at lines {start_line}-{end_line}")
         return text, start_line, end_line
+
+    def list_symbols(self, file_path: Path) -> List[dict]:
+        """List all extractable symbols in a C++ file."""
+        source = file_path.read_bytes()
+        symbols = self.cpp_parser.list_symbols(source)
+
+        # Also find markers
+        root = self.parse_file(file_path)
+        markers = self.find_markers_in_node(root)
+        for marker_name, (start_line, end_line) in markers.items():
+            symbols.append({
+                "name": marker_name,
+                "kind": "marker",
+                "param": "marker",
+                "line": start_line,
+                "end_line": end_line,
+            })
+
+        return symbols
 
     def find_class_or_namespace(self, file_path: Path, name: str) -> Optional[Node]:
         """

@@ -5,12 +5,11 @@ Command-line interface for projected-source.
 import logging
 
 import click
-from rich.table import Table
 
 from .. import setup_logging
 from .ai_guide import ai_guide
 from .find_markers import find_markers
-from .helpers import console
+from .list_symbols import list_functions
 from .render import render
 
 logger = logging.getLogger(__name__)
@@ -33,23 +32,7 @@ def cli(verbose, debug):
 cli.add_command(render)
 cli.add_command(ai_guide)
 cli.add_command(find_markers)
-
-
-@cli.command()
-def list_functions():
-    """List available extraction functions."""
-    table = Table(title="Available Extraction Functions")
-    table.add_column("Function", style="cyan")
-    table.add_column("Description", style="green")
-
-    table.add_row("code()", "Universal code extraction function")
-    table.add_row("  function=", "Extract a function by name")
-    table.add_row("  function_macro=", "Extract function defined by macro")
-    table.add_row("  macro_definition=", "Extract macro definition (#define)")
-    table.add_row("  marker=", "Extract between comment markers")
-    table.add_row("  lines=", "Extract specific line range")
-
-    console.print(table)
+cli.add_command(list_functions)
 
 
 def main():

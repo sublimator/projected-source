@@ -708,6 +708,162 @@ class SimpleCppParser:
         return _node_to_result(node, name) if node else None
 
 
+    def list_symbols(self, source_code: bytes) -> List[dict]:
+        """
+        List all extractable symbols in C++ source code.
+
+        Returns a list of dicts with:
+            - name: qualified name to use in code() calls
+            - kind: human-readable kind (function, class, struct, enum, variable)
+            - param: the code() parameter to use (function, struct, var)
+            - line: 1-based start line number
+            - signature: parameter signature (functions only)
+        """
+        tree = self.parser.parse(source_code)
+        root = tree.root_node
+        symbols = []
+
+        def collect(node, context_stack=None):
+            if context_stack is None:
+                context_stack = []
+
+            if node.type == "namespace_definition":
+                name_node = node.child_by_field_name("name")
+                ns_name = None
+                if name_node:
+                    ns_name = node_text(name_node)
+                    if ns_name.endswith("::"):
+                        ns_name = ns_name.rstrip(":")
+                if ns_name and "::" in ns_name:
+                    new_context = context_stack + ns_name.split("::")
+                else:
+                    new_context = context_stack + ([ns_name] if ns_name else [])
+                body = node.child_by_field_name("body")
+                if body and body.type == "declaration_list":
+                    for decl in body.children:
+                        collect(decl, new_context)
+                return
+
+            if node.type in ["class_specifier", "struct_specifier", "enum_specifier"]:
+                type_name = None
+                has_body = False
+                for child in node.children:
+                    if child.type == "type_identifier":
+                        type_name = node_text(child)
+                    if child.type in ["field_declaration_list", "enumerator_list"]:
+                        has_body = True
+                if type_name and has_body:
+                    kind_map = {
+                        "class_specifier": "class",
+                        "struct_specifier": "struct",
+                        "enum_specifier": "enum",
+                    }
+                    qualified = "::".join(context_stack + [type_name])
+                    symbols.append({
+                        "name": qualified,
+                        "kind": kind_map[node.type],
+                        "param": "struct",
+                        "line": node.start_point.row + 1,
+                    })
+                    new_context = context_stack + [type_name]
+                    for child in node.children:
+                        if child.type == "field_declaration_list":
+                            for member in child.children:
+                                collect(member, new_context)
+                return
+
+            if node.type == "function_definition":
+                declarator = node.child_by_field_name("declarator")
+                if declarator:
+                    name, qualifiers = self._extract_function_name_and_qualifiers(
+                        declarator, context_stack
+                    )
+                    if name:
+                        qualified = "::".join(qualifiers + [name]) if qualifiers else name
+                        sig = self._extract_parameter_signature(node)
+                        symbols.append({
+                            "name": qualified,
+                            "kind": "function",
+                            "param": "function",
+                            "line": node.start_point.row + 1,
+                            "signature": sig,
+                        })
+                return
+
+            if node.type == "field_declaration":
+                declarator = node.child_by_field_name("declarator")
+                if declarator and declarator.type == "function_declarator":
+                    name, qualifiers = self._extract_function_name_and_qualifiers(
+                        declarator, context_stack
+                    )
+                    if name:
+                        qualified = "::".join(qualifiers + [name]) if qualifiers else name
+                        sig = self._extract_parameter_signature(node)
+                        symbols.append({
+                            "name": qualified,
+                            "kind": "function",
+                            "param": "function",
+                            "line": node.start_point.row + 1,
+                            "signature": sig,
+                        })
+                return
+
+            if node.type == "template_declaration":
+                for child in node.children:
+                    if child.type == "function_definition":
+                        declarator = child.child_by_field_name("declarator")
+                        if declarator:
+                            name, qualifiers = self._extract_function_name_and_qualifiers(
+                                declarator, context_stack
+                            )
+                            if name:
+                                qualified = "::".join(qualifiers + [name]) if qualifiers else name
+                                sig = self._extract_parameter_signature(node)
+                                symbols.append({
+                                    "name": qualified,
+                                    "kind": "function",
+                                    "param": "function",
+                                    "line": node.start_point.row + 1,
+                                    "signature": sig,
+                                })
+                        return
+                    elif child.type in ["class_specifier", "struct_specifier"]:
+                        collect(child, context_stack)
+                        return
+                return
+
+            if node.type == "declaration":
+                var_name = None
+                for child in node.children:
+                    if child.type == "init_declarator":
+                        for subchild in child.children:
+                            if subchild.type == "identifier":
+                                var_name = node_text(subchild)
+                                break
+                            elif subchild.type in ["array_declarator", "pointer_declarator"]:
+                                for leaf in subchild.children:
+                                    if leaf.type == "identifier":
+                                        var_name = node_text(leaf)
+                                        break
+                                if var_name:
+                                    break
+                        break
+                if var_name:
+                    qualified = "::".join(context_stack + [var_name]) if context_stack else var_name
+                    symbols.append({
+                        "name": qualified,
+                        "kind": "variable",
+                        "param": "var",
+                        "line": node.start_point.row + 1,
+                    })
+
+            for child in node.children:
+                collect(child, context_stack)
+
+        collect(root)
+        return symbols
+
+
 if __name__ == "__main__":
     import sys
 

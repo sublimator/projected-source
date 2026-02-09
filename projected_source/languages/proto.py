@@ -8,7 +8,7 @@ import ctypes
 import logging
 import re
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from tree_sitter import Language, Node, Parser
 
@@ -239,6 +239,71 @@ class ProtoExtractor(BaseExtractor):
         end_line = node_start_line + end_idx - 1
 
         return extracted_text, start_line, end_line
+
+    def list_symbols(self, file_path: Path) -> List[dict]:
+        """List all extractable symbols in a proto file."""
+        source = file_path.read_bytes()
+        tree = self._parser.parse(source)
+        symbols = []
+
+        def _node_name(node):
+            return node.text.decode("utf8") if node.text else None
+
+        def collect(node):
+            if node.type == "message":
+                for child in node.children:
+                    if child.type == "message_name":
+                        name = _node_name(child)
+                        if name:
+                            symbols.append({
+                                "name": name,
+                                "kind": "message",
+                                "param": "message",
+                                "line": node.start_point.row + 1,
+                            })
+                        break
+            elif node.type == "enum":
+                for child in node.children:
+                    if child.type == "enum_name":
+                        name = _node_name(child)
+                        if name:
+                            symbols.append({
+                                "name": name,
+                                "kind": "enum",
+                                "param": "enum",
+                                "line": node.start_point.row + 1,
+                            })
+                        break
+            elif node.type == "service":
+                for child in node.children:
+                    if child.type == "service_name":
+                        name = _node_name(child)
+                        if name:
+                            symbols.append({
+                                "name": name,
+                                "kind": "service",
+                                "param": "service",
+                                "line": node.start_point.row + 1,
+                            })
+                        break
+
+            for child in node.children:
+                collect(child)
+
+        collect(tree.root_node)
+
+        # Also find markers
+        markers = self.find_markers_in_file(file_path)
+        for marker_name, (start_line, end_line) in markers.items():
+            symbols.append({
+                "name": marker_name,
+                "kind": "marker",
+                "param": "marker",
+                "line": start_line,
+                "end_line": end_line,
+            })
+
+        return symbols
 
     def find_markers_in_file(self, file_path: Path) -> Dict[str, Tuple[int, int]]:
         """
