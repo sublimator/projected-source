@@ -67,6 +67,7 @@ class TemplateRenderer:
         self.env.globals["code"] = self._code_function
         self.env.globals["ghc"] = self._code_function  # Alias for compatibility
         self.env.globals["ignore_changes"] = self._ignore_changes_function
+        self.env.globals["include"] = self._include_function
 
         # Load project-specific custom tags if available
         # (loaded on-demand when rendering templates)
@@ -352,6 +353,31 @@ class TemplateRenderer:
             logger.warning(f"Failed to extract region for ignore_changes: {e}")
 
         return ""
+
+    def _include_function(self, path: str) -> str:
+        """
+        Include a file into the template output.
+
+        .j2 files are rendered as Jinja2 templates (with access to code() etc).
+        All other files are included as raw text.
+
+        Args:
+            path: Path relative to the template directory
+
+        Returns:
+            File contents (rendered if .j2)
+
+        Examples:
+            {{ include('background.md') }}
+            {{ include('details.md.j2') }}
+            {{ include('sections/intro.md') }}
+        """
+        if path.endswith(".j2"):
+            template = self.env.get_template(path)
+            return template.render()
+        else:
+            full_path = self.template_dir / path
+            return full_path.read_text()
 
     def _find_custom_tags_file(self, start_path: Path) -> Optional[Path]:
         """

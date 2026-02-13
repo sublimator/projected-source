@@ -100,6 +100,23 @@ projected-source render docs/ -V auto --strict     # exit 1 if uncovered
 {{ code('src/file.cpp', function='foo', language='cpp') }}     {# force language #}
 ```
 
+### include() - Include peer files
+
+```jinja
+{# Include raw markdown (no template processing) #}
+{{ include('background.md') }}
+
+{# Include and render a Jinja2 template (has access to code() etc) #}
+{{ include('details.md.j2') }}
+
+{# Include from subdirectory #}
+{{ include('sections/intro.md') }}
+```
+
+Paths are relative to the template directory. `.j2` files are rendered as
+templates with full access to `code()` and other functions. All other files
+are included as raw text (Jinja2 syntax in them is NOT processed).
+
 ### ignore_changes() - Exclude regions from validation
 
 When using `-V` to validate documentation coverage, use `ignore_changes()` to
