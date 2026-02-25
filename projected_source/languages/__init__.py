@@ -22,6 +22,7 @@ EXTRACTORS = {
     ".h++": CppExtractor,
     ".c": CppExtractor,  # C is close enough to C++ for our purposes
     ".ipp": CppExtractor,  # Inline implementation files
+    ".macro": CppExtractor,  # C preprocessor macro files (e.g., rippled sfields.macro)
     ".proto": ProtoExtractor,  # Protocol Buffers
 }
 

@@ -339,7 +339,6 @@ class TestTemplateVsNonTemplateMarkers:
         assert len(nodes) == 2
 
         # One should be template, one not
-        node_types = [n.type for n in nodes]
         texts = [n.text.decode("utf8") if n.text else "" for n in nodes]
 
         # Check we got both versions

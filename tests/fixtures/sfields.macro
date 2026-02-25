@@ -1,0 +1,12 @@
+// Serialized fields - included by sfields.cpp
+// This is a C preprocessor macro file (#included by .cpp files)
+
+TYPED_SFIELD(sfCloseResolution,         UINT8,      1)
+TYPED_SFIELD(sfMethod,                  UINT8,      2)
+TYPED_SFIELD(sfTransactionType,         UINT16,     2)
+TYPED_SFIELD(sfSignerWeight,            UINT16,     3)
+TYPED_SFIELD(sfHookExportCount,         UINT16,    98)
+TYPED_SFIELD(sfTransferFee,             UINT16,     4)
+
+TYPED_SFIELD(sfAmount,                  AMOUNT,     1)
+TYPED_SFIELD(sfBalance,                 AMOUNT,     2)
