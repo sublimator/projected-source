@@ -298,6 +298,16 @@ class PythonExtractor(BaseExtractor):
             if args.vararg.annotation:
                 name += f": {ast.unparse(args.vararg.annotation)}"
             parts.append(name)
+        elif args.kwonlyargs:
+            # bare * separator for keyword-only args without *args
+            parts.append("*")
+
+        # keyword-only args
+        for arg in args.kwonlyargs:
+            name = arg.arg
+            if arg.annotation:
+                name += f": {ast.unparse(arg.annotation)}"
+            parts.append(name)
 
         # **kwargs
         if args.kwarg:

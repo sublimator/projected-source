@@ -6,7 +6,9 @@ import pytest
 
 from projected_source.languages.python import PythonExtractor
 
-FIXTURE = Path(__file__).parent / "fixtures" / "python" / "sample.py"
+FIXTURES = Path(__file__).parent / "fixtures" / "python"
+FIXTURE = FIXTURES / "sample.py"
+DECORATED_FIXTURE = FIXTURES / "decorated_classes.py"
 
 
 @pytest.fixture
@@ -212,6 +214,200 @@ class TestListSymbols:
             assert "kind" in sym
             assert "param" in sym
             assert "line" in sym
+
+
+class TestDecoratedClasses:
+    def test_dataclass_includes_decorator(self, extractor):
+        text, start, end = extractor.extract_struct(DECORATED_FIXTURE, "Config")
+        assert "@dataclass" in text
+        assert "class Config:" in text
+        assert 'host: str = "localhost"' in text
+
+    def test_decorated_class_in_list_symbols(self, extractor):
+        symbols = extractor.list_symbols(DECORATED_FIXTURE)
+        config = [s for s in symbols if s["name"] == "Config"]
+        assert len(config) == 1
+        # decorator line should be before class line
+        assert config[0]["line"] < 10  # @dataclass is near top
+
+    def test_inheriting_class(self, extractor):
+        text, start, end = extractor.extract_struct(DECORATED_FIXTURE, "ChildConfig")
+        assert "@dataclass" in text
+        assert "class ChildConfig(Config):" in text
+
+    def test_deeply_nested_class(self, extractor):
+        text, start, end = extractor.extract_struct(DECORATED_FIXTURE, "Outer.Middle.Inner")
+        assert "class Inner:" in text
+        assert "def deep_method" in text
+        assert "class Outer:" not in text
+        assert "class Middle:" not in text
+
+    def test_deeply_nested_method(self, extractor):
+        text, start, end = extractor.extract_function(DECORATED_FIXTURE, "Outer.Middle.Inner.deep_method")
+        assert "def deep_method(self):" in text
+        assert 'return "deep"' in text
+
+
+class TestDottedPathEdgeCases:
+    def test_bad_first_segment(self, extractor):
+        with pytest.raises(ValueError, match="not found"):
+            extractor.extract_function(FIXTURE, "NonExistent.method")
+
+    def test_bad_middle_segment(self, extractor):
+        with pytest.raises(ValueError, match="not found"):
+            extractor.extract_function(DECORATED_FIXTURE, "Outer.NonExistent.method")
+
+    def test_deeply_nested_function(self, extractor):
+        text, start, end = extractor.extract_function(
+            DECORATED_FIXTURE, "valid_path.level_one.level_two"
+        )
+        assert "def level_two():" in text
+        assert 'return "found"' in text
+
+    def test_function_not_class_for_struct(self, extractor):
+        """Searching for a function name with struct= should fail."""
+        with pytest.raises(ValueError, match="not found"):
+            extractor.extract_struct(FIXTURE, "simple_function")
+
+    def test_class_not_function_for_function(self, extractor):
+        """Searching for a class name with function= should fail."""
+        with pytest.raises(ValueError, match="not found"):
+            extractor.extract_function(FIXTURE, "SimpleClass")
+
+
+class TestLineNumbers:
+    def test_function_line_numbers(self, extractor):
+        _, start, end = extractor.extract_function(FIXTURE, "simple_function")
+        assert start == 14
+        assert end == 16
+
+    def test_decorated_function_starts_at_decorator(self, extractor):
+        _, start, end = extractor.extract_function(FIXTURE, "SimpleClass.static_method")
+        # @staticmethod line should be the start
+        assert start == 62
+
+    def test_class_line_numbers(self, extractor):
+        _, start, end = extractor.extract_struct(FIXTURE, "SimpleClass")
+        assert start == 50
+        assert end == 76
+
+    def test_variable_single_line(self, extractor):
+        _, start, end = extractor.extract_variable(FIXTURE, "MAX_RETRIES")
+        assert start == end  # single line
+
+    def test_variable_multiline_span(self, extractor):
+        _, start, end = extractor.extract_variable(FIXTURE, "LOOKUP_TABLE")
+        assert start == 7
+        assert end == 11
+
+    def test_marker_excludes_marker_lines(self, extractor):
+        text, start, end = extractor.extract_marker(FIXTURE, "config-section")
+        source_lines = FIXTURE.read_text().splitlines()
+        # start/end should point to content lines, not marker comment lines
+        assert "#@@start" not in source_lines[start - 1]
+        assert "#@@end" not in source_lines[end - 1]
+
+
+class TestParseFileNotSupported:
+    def test_parse_file_raises(self, extractor):
+        with pytest.raises(NotImplementedError):
+            extractor.parse_file(FIXTURE)
+
+
+class TestSignatures:
+    def test_kwonly_args_signature(self, extractor):
+        symbols = extractor.list_symbols(DECORATED_FIXTURE)
+        func = [s for s in symbols if s["name"] == "has_kwonly_args"]
+        assert len(func) == 1
+        sig = func[0]["signature"]
+        assert "key: str" in sig
+        assert "value: int" in sig
+        assert "-> dict" in sig
+
+    def test_self_in_method_signature(self, extractor):
+        symbols = extractor.list_symbols(FIXTURE)
+        init = [s for s in symbols if s["name"] == "SimpleClass.__init__"]
+        assert len(init) == 1
+        assert "self" in init[0]["signature"]
+        assert "value: int" in init[0]["signature"]
+
+    def test_no_args_signature(self, extractor):
+        symbols = extractor.list_symbols(FIXTURE)
+        simple = [s for s in symbols if s["name"] == "simple_function"]
+        assert len(simple) == 1
+        assert simple[0]["signature"] == "()"
+
+    def test_complex_sig_in_list(self, extractor):
+        symbols = extractor.list_symbols(FIXTURE)
+        func = [s for s in symbols if s["name"] == "function_with_complex_sig"]
+        assert len(func) == 1
+        sig = func[0]["signature"]
+        assert "*args: int" in sig
+        assert "**kwargs: str" in sig
+
+
+class TestRendererIntegration:
+    """Test that code() dispatches correctly for Python files."""
+
+    def test_code_function_python(self, tmp_path):
+        """Test code() with function= on a .py file."""
+        from projected_source.core.renderer import TemplateRenderer
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("def hello():\n    return 42\n")
+
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+        result = renderer._code_function("example.py", function="hello", github=False)
+        assert "def hello():" in result
+        assert "return 42" in result
+        assert "```python" in result
+
+    def test_code_struct_python(self, tmp_path):
+        """Test code() with struct= on a .py file."""
+        from projected_source.core.renderer import TemplateRenderer
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("class Foo:\n    x = 1\n")
+
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+        result = renderer._code_function("example.py", struct="Foo", github=False)
+        assert "class Foo:" in result
+        assert "x = 1" in result
+
+    def test_code_var_python(self, tmp_path):
+        """Test code() with var= on a .py file."""
+        from projected_source.core.renderer import TemplateRenderer
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("MY_VAR = 42\n")
+
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+        result = renderer._code_function("example.py", var="MY_VAR", github=False)
+        assert "MY_VAR = 42" in result
+
+    def test_code_marker_python(self, tmp_path):
+        """Test code() with marker= on a .py file."""
+        from projected_source.core.renderer import TemplateRenderer
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("#@@start section\nx = 1\ny = 2\n#@@end section\n")
+
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+        result = renderer._code_function("example.py", marker="section", github=False)
+        assert "x = 1" in result
+        assert "y = 2" in result
+
+    def test_code_lines_python(self, tmp_path):
+        """Test code() with lines= on a .py file."""
+        from projected_source.core.renderer import TemplateRenderer
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("line1\nline2\nline3\n")
+
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+        result = renderer._code_function("example.py", lines=(1, 2), github=False)
+        assert "line1" in result
+        assert "line2" in result
 
 
 class TestExtractorRegistration:

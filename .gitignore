@@ -7,3 +7,4 @@ rendered
 tests/fixtures/collected/
 
 test-repo/
+.coverage
