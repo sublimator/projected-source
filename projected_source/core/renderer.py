@@ -169,25 +169,42 @@ class TemplateRenderer:
             elif macro_definition:
                 code_text, start_line, end_line = extractor.extract_macro_definition(resolved_path, macro_definition)
                 logger.info(f"Extracted macro_definition '{macro_definition}' from {file_path}")
-            elif struct or var:
-                # Extract struct/class/enum/variable (for C/C++)
-                name = struct or var
-                kind = "struct/class/enum" if struct else "variable"
-                if hasattr(extractor, "extract_struct"):
+            elif var:
+                # Extract variable/constant declaration
+                if hasattr(extractor, "extract_variable"):
+                    code_text, start_line, end_line = extractor.extract_variable(resolved_path, var)
+                    logger.info(f"Extracted variable '{var}' from {file_path}")
+                elif hasattr(extractor, "extract_struct"):
+                    # C/C++ uses extract_struct for var= (finds declarations)
                     if marker:
-                        # Extract marker within struct/var
                         if hasattr(extractor, "extract_struct_marker"):
                             code_text, start_line, end_line = extractor.extract_struct_marker(
-                                resolved_path, name, marker
+                                resolved_path, var, marker
                             )
-                            logger.info(f"Extracted marker '{marker}' from {kind} '{name}' in {file_path}")
+                            logger.info(f"Extracted marker '{marker}' from variable '{var}' in {file_path}")
                         else:
-                            return f"❌ **ERROR**: Marker extraction in {kind} not supported"
+                            return "❌ **ERROR**: Marker extraction in variable not supported"
                     else:
-                        code_text, start_line, end_line = extractor.extract_struct(resolved_path, name)
-                        logger.info(f"Extracted {kind} '{name}' from {file_path}")
+                        code_text, start_line, end_line = extractor.extract_struct(resolved_path, var)
+                        logger.info(f"Extracted variable '{var}' from {file_path}")
                 else:
-                    return f"❌ **ERROR**: {kind.capitalize()} extraction not supported for this file type"
+                    return "❌ **ERROR**: Variable extraction not supported for this file type"
+            elif struct:
+                # Extract struct/class/enum definition
+                if hasattr(extractor, "extract_struct"):
+                    if marker:
+                        if hasattr(extractor, "extract_struct_marker"):
+                            code_text, start_line, end_line = extractor.extract_struct_marker(
+                                resolved_path, struct, marker
+                            )
+                            logger.info(f"Extracted marker '{marker}' from struct '{struct}' in {file_path}")
+                        else:
+                            return "❌ **ERROR**: Marker extraction in struct not supported"
+                    else:
+                        code_text, start_line, end_line = extractor.extract_struct(resolved_path, struct)
+                        logger.info(f"Extracted struct/class '{struct}' from {file_path}")
+                else:
+                    return "❌ **ERROR**: Struct/class extraction not supported for this file type"
             elif message:
                 # Extract protobuf message
                 if hasattr(extractor, "extract_message"):
@@ -270,6 +287,7 @@ class TemplateRenderer:
                     ".h": "cpp",
                     ".hxx": "cpp",
                     ".ipp": "cpp",  # Inline implementation files
+                    ".macro": "cpp",  # C preprocessor macro files
                     ".c": "c",
                     ".py": "python",
                     ".js": "javascript",

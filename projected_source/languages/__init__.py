@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .cpp import CppExtractor
 from .proto import ProtoExtractor
+from .python import PythonExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,8 @@ EXTRACTORS = {
     ".ipp": CppExtractor,  # Inline implementation files
     ".macro": CppExtractor,  # C preprocessor macro files (e.g., rippled sfields.macro)
     ".proto": ProtoExtractor,  # Protocol Buffers
+    ".py": PythonExtractor,  # Python
+    ".pyi": PythonExtractor,  # Python type stubs
 }
 
 
