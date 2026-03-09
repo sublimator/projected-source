@@ -391,3 +391,53 @@ class TestMacroNameExtraction:
         results = macro_finder.find_by_name(source, "DEFINE_FUNC")
         assert len(results) == 1
         assert results[0]["type"] == "definition"
+
+
+# ==================== Declaration vs Definition preference ====================
+
+
+DECL_VS_DEF = FIXTURES / "declaration_vs_definition.cpp"
+
+
+class TestDeclarationVsDefinition:
+    """Tests that out-of-line definitions are preferred over in-class declarations."""
+
+    def test_prefers_definition_over_declaration(self, extractor):
+        """When both declaration and definition exist, prefer the definition (has body)."""
+        from projected_source.languages.cpp_parser import SimpleCppParser
+
+        parser = SimpleCppParser()
+        source = DECL_VS_DEF.read_bytes()
+        result = parser.extract_function_by_name(source, "NetworkOPsImp::setAmendmentBlocked")
+        assert result is not None
+        assert "blocked_ = true" in result.text  # Body content, not just declaration
+
+    def test_definition_has_body(self, extractor):
+        """The extracted result should contain the function body, not just a signature."""
+        from projected_source.languages.cpp_parser import SimpleCppParser
+
+        parser = SimpleCppParser()
+        source = DECL_VS_DEF.read_bytes()
+        result = parser.extract_function_by_name(source, "NetworkOPsImp::getValue")
+        assert result is not None
+        assert "return value_" in result.text
+
+    def test_all_out_of_line_definitions_preferred(self, extractor):
+        """All three out-of-line definitions should be preferred."""
+        from projected_source.languages.cpp_parser import SimpleCppParser
+
+        parser = SimpleCppParser()
+        source = DECL_VS_DEF.read_bytes()
+        result = parser.extract_function_by_name(source, "NetworkOPsImp::process")
+        assert result is not None
+        assert "value_ = x * 2" in result.text
+
+    def test_declaration_only_still_works(self, extractor):
+        """If only a declaration exists (no definition), it should still be returned."""
+        from projected_source.languages.cpp_parser import SimpleCppParser
+
+        parser = SimpleCppParser()
+        # Source with only declarations, no definitions
+        source = b"class Foo {\npublic:\n    void bar();\n};\n"
+        result = parser.extract_function_by_name(source, "Foo::bar")
+        assert result is not None

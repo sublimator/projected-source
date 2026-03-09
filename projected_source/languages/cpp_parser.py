@@ -646,6 +646,9 @@ class SimpleCppParser:
         - Nested namespaces: "ns1::ns2::function_name"
         - Namespace + class: "namespace::ClassName::method_name"
 
+        When both a declaration and definition exist, prefers the definition
+        (the one with a body).
+
         Args:
             source_code: The C++ source code as bytes
             function_name: Name of the function to extract (can include :: for class/namespace)
@@ -654,36 +657,42 @@ class SimpleCppParser:
         Returns:
             ExtractionResult with all the info, or None if not found
         """
-        if signature is None:
-            # Original behavior - find first match
-            node = self._find_node_by_qualified_name(source_code, function_name, ["function_definition"])
-            return _node_to_result(node, function_name) if node else None
-
-        # Find all overloads and filter by signature
+        # Find all matches (definitions + declarations)
         nodes = self._find_all_nodes_by_qualified_name(source_code, function_name, ["function_definition"])
 
         if not nodes:
             return None
 
-        # Filter by signature
-        matching = []
-        for node in nodes:
-            param_sig = self._extract_parameter_signature(node)
-            if signature in param_sig:
-                matching.append(node)
+        if signature is not None:
+            # Filter by signature
+            matching = []
+            for node in nodes:
+                param_sig = self._extract_parameter_signature(node)
+                if signature in param_sig:
+                    matching.append(node)
 
-        if not matching:
-            # No match - provide helpful error info
-            available = [self._extract_parameter_signature(n) for n in nodes]
-            logger.warning(f"No overload of '{function_name}' matches signature '{signature}'. Available: {available}")
-            return None
+            if not matching:
+                available = [self._extract_parameter_signature(n) for n in nodes]
+                logger.warning(
+                    f"No overload of '{function_name}' matches signature '{signature}'. Available: {available}"
+                )
+                return None
 
-        if len(matching) > 1:
-            # Multiple matches - need more specific signature
-            sigs = [self._extract_parameter_signature(n) for n in matching]
-            logger.warning(f"Multiple overloads of '{function_name}' match signature '{signature}': {sigs}")
+            if len(matching) > 1:
+                sigs = [self._extract_parameter_signature(n) for n in matching]
+                logger.warning(
+                    f"Multiple overloads of '{function_name}' match signature '{signature}': {sigs}"
+                )
 
-        return _node_to_result(matching[0], function_name)
+            nodes = matching
+
+        # Prefer function_definition (has body) over field_declaration (just a declaration)
+        definitions = [n for n in nodes if n.type == "function_definition"]
+        if definitions:
+            return _node_to_result(definitions[0], function_name)
+
+        # Fall back to declaration (e.g., header-only code)
+        return _node_to_result(nodes[0], function_name)
 
     def extract_struct_or_class_by_name(self, source_code: bytes, name: str) -> Optional[ExtractionResult]:
         """
