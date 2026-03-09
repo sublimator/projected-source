@@ -482,12 +482,28 @@ class SimpleCppParser:
                             found_name, found_qualifiers = self._extract_function_name_and_qualifiers(
                                 declarator, context_stack
                             )
-                            # Match base name for template functions
+                            # Match base name for template functions (e.g. templateAdd<int> -> templateAdd)
                             base_found = found_name.split("<")[0] if "<" in found_name else found_name
-                            if base_found == target_leaf_name or found_name == target_leaf_name:
+                            base_target = (
+                                target_leaf_name.split("<")[0] if "<" in target_leaf_name else target_leaf_name
+                            )
+                            if base_found == base_target or found_name == target_leaf_name:
                                 if self._qualifiers_match(found_qualifiers, qualifiers):
                                     results.append(node)
-                # Don't recurse into template children - we already handled the function
+                    elif child.type in ["class_specifier", "struct_specifier"]:
+                        # Template class - recurse into its members with class context
+                        class_name = None
+                        for cc in child.children:
+                            if cc.type == "type_identifier":
+                                class_name = node_text(cc)
+                                break
+                        if class_name:
+                            new_context = context_stack + [class_name]
+                            for cc in child.children:
+                                if cc.type == "field_declaration_list":
+                                    for member in cc.children:
+                                        collect_nodes(member, new_context, depth + 1)
+                # Don't recurse into template children - we already handled them
                 return
 
             # Recurse into children
@@ -520,12 +536,8 @@ class SimpleCppParser:
                     if child.type in ["namespace_identifier", "identifier"]:
                         parts.append(node_text(child))
                     elif child.type == "template_type":
-                        type_id = None
-                        for tc in child.children:
-                            if tc.type == "type_identifier":
-                                type_id = tc.text.decode("utf8")
-                        if type_id:
-                            parts.append(type_id)
+                        # Preserve full template type including args (e.g. Container<T>)
+                        parts.append(node_text(child))
                     elif child.type == "operator_name":
                         parts.append(extract_operator_name(child))
                     elif child.type == "qualified_identifier":
@@ -546,6 +558,10 @@ class SimpleCppParser:
                         if all_parts:
                             found_name = all_parts[-1]
                             found_qualifiers = all_parts[:-1]
+                    elif name_node.type == "template_function":
+                        # Template specialization: templateAdd<int>(...)
+                        found_name = node_text(name_node)
+                        found_qualifiers = context_stack
                     elif name_node.type == "identifier":
                         found_name = node_text(name_node)
                         found_qualifiers = context_stack
@@ -570,14 +586,28 @@ class SimpleCppParser:
 
         return found_name, found_qualifiers
 
+    @staticmethod
+    def _qualifier_base(q: str) -> str:
+        """Strip template args from a qualifier: 'Container<T>' -> 'Container'."""
+        idx = q.find("<")
+        return q[:idx] if idx >= 0 else q
+
     def _qualifiers_match(self, found: List[str], target: List[str]) -> bool:
-        """Check if qualifier lists match."""
+        """Check if qualifier lists match (template args are compared flexibly)."""
         if not target:
             return True
         if found == target:
             return True
         if len(found) >= len(target) and found[-len(target) :] == target:
             return True
+        # Compare stripping template args from both sides
+        if len(found) >= len(target):
+            found_tail = found[-len(target) :]
+            if all(
+                self._qualifier_base(f) == self._qualifier_base(t)
+                for f, t in zip(found_tail, target)
+            ):
+                return True
         return False
 
     def _extract_parameter_signature(self, node: Node) -> str:
@@ -686,8 +716,17 @@ class SimpleCppParser:
 
             nodes = matching
 
-        # Prefer function_definition (has body) over field_declaration (just a declaration)
-        definitions = [n for n in nodes if n.type == "function_definition"]
+        # If target has template args (e.g. templateAdd<int>), prefer exact specialization
+        # over generic template match
+        if "<" in function_name:
+            target_leaf = function_name.split("::")[-1]
+            exact = [n for n in nodes if target_leaf in node_text(n)]
+            if exact:
+                nodes = exact
+
+        # Prefer nodes with bodies (function_definition, template_declaration wrapping
+        # a function_definition) over field_declaration (just a declaration)
+        definitions = [n for n in nodes if n.type in ("function_definition", "template_declaration")]
         if definitions:
             return _node_to_result(definitions[0], function_name)
 
