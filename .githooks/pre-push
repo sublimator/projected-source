@@ -20,10 +20,16 @@ HEADER_PATTERN = re.compile(
     re.DOTALL,
 )
 
+# Pattern to normalize commit hashes in GitHub permalink URLs
+# e.g. /blob/abc123def.../file.py -> /blob/COMMIT/file.py
+COMMIT_HASH_PATTERN = re.compile(r"/blob/[0-9a-f]{7,40}/")
 
-def strip_header(text: str) -> str:
-    """Remove the rendered header block so timestamps don't cause false diffs."""
-    return HEADER_PATTERN.sub("", text, count=1)
+
+def normalize_for_comparison(text: str) -> str:
+    """Strip header and normalize commit hashes so only content changes matter."""
+    text = HEADER_PATTERN.sub("", text, count=1)
+    text = COMMIT_HASH_PATTERN.sub("/blob/COMMIT/", text)
+    return text
 
 
 def main() -> int:
@@ -56,10 +62,10 @@ def main() -> int:
             Path(tmp_path).unlink(missing_ok=True)
             continue
 
-        # Compare content (strip header from committed version)
+        # Compare content (strip header and normalize commit hashes)
         if output_path.exists():
-            committed = strip_header(output_path.read_text())
-            rendered = Path(tmp_path).read_text()
+            committed = normalize_for_comparison(output_path.read_text())
+            rendered = normalize_for_comparison(Path(tmp_path).read_text())
 
             if committed != rendered:
                 errors.append(
