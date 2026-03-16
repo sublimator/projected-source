@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""
+Pre-push hook: verify all .md.j2 templates render successfully
+and that rendered output is up-to-date (ignoring header metadata).
+"""
+
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DOCS_DIR = REPO_ROOT / "docs"
+
+# Pattern to strip the dynamic header block for comparison
+# Matches: <!-- ... --> \n --- \n <sub>...</sub> \n ---
+HEADER_PATTERN = re.compile(
+    r"^<!--\n.*?-->\n\n---\n\n<sub>.*?</sub>\n\n---\n\n",
+    re.DOTALL,
+)
+
+
+def strip_header(text: str) -> str:
+    """Remove the rendered header block so timestamps don't cause false diffs."""
+    return HEADER_PATTERN.sub("", text, count=1)
+
+
+def main() -> int:
+    templates = list(DOCS_DIR.glob("**/*.md.j2"))
+    # Only check top-level templates (not includes in sections/)
+    top_level = [t for t in templates if t.parent == DOCS_DIR]
+
+    if not top_level:
+        return 0
+
+    errors = []
+
+    for template in top_level:
+        # Determine expected output path
+        output_path = template.with_suffix("")  # .md.j2 -> .md
+
+        # Render to a temp file with --no-header (for clean comparison)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        result = subprocess.run(
+            ["uv", "run", "projected-source", "render", str(template), str(tmp_path), "--no-header"],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+        )
+
+        if result.returncode != 0:
+            errors.append(f"  RENDER FAILED: {template.name}\n    {result.stderr.strip()}")
+            Path(tmp_path).unlink(missing_ok=True)
+            continue
+
+        # Compare content (strip header from committed version)
+        if output_path.exists():
+            committed = strip_header(output_path.read_text())
+            rendered = Path(tmp_path).read_text()
+
+            if committed != rendered:
+                errors.append(
+                    f"  STALE: {output_path.name} — re-render with:\n"
+                    f"    uv run projected-source render {template.relative_to(REPO_ROOT)}"
+                )
+        else:
+            errors.append(f"  MISSING: {output_path.name} — render it first")
+
+        Path(tmp_path).unlink(missing_ok=True)
+
+    if errors:
+        print("pre-push: documentation check failed:\n")
+        for err in errors:
+            print(err)
+        print()
+        return 1
+
+    print(f"pre-push: {len(top_level)} template(s) verified")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
