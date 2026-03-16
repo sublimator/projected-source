@@ -8,6 +8,7 @@ import sys
 import tempfile
 from collections import defaultdict
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -56,6 +57,57 @@ def git_worktree_at_commit(repo_path: Path, commit: str):
             shutil.rmtree(worktree_path, ignore_errors=True)
 
 
+def _build_header(template_name: str, repo_path: Path) -> str:
+    """Build a metadata header with front matter comment and last-updated line."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    date_display = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Get git info
+    branch = ""
+    commit_hash = ""
+    commit_subject = ""
+    try:
+        branch = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_path, stderr=subprocess.DEVNULL
+            )
+            .decode()
+            .strip()
+        )
+        commit_hash = (
+            subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=repo_path, stderr=subprocess.DEVNULL)
+            .decode()
+            .strip()
+        )
+        commit_subject = (
+            subprocess.check_output(["git", "log", "-1", "--format=%s"], cwd=repo_path, stderr=subprocess.DEVNULL)
+            .decode()
+            .strip()
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+
+    lines = [
+        "<!--",
+        f"rendered_from: {template_name}",
+        f"rendered_at: {now}",
+    ]
+    if branch:
+        lines.append(f"branch: {branch}")
+    if commit_hash:
+        lines.append(f"commit: {commit_hash}")
+    if commit_subject:
+        lines.append(f"commit_message: {commit_subject}")
+    lines.append("-->")
+
+    display_parts = [f"Last updated: {date_display}"]
+    if branch and commit_hash:
+        display_parts.append(f"branch: {branch}")
+        display_parts.append(f"commit: {commit_hash} ({commit_subject})")
+
+    return "\n".join(lines) + f"\n\n---\n\n<sub>{' | '.join(display_parts)}</sub>\n\n---\n\n"
+
+
 @click.command()
 @click.argument("input_path", type=click.Path(path_type=Path))
 @click.argument("output_path", type=click.Path(path_type=Path), required=False)
@@ -90,6 +142,11 @@ def git_worktree_at_commit(repo_path: Path, commit: str):
     default=None,
     help="Render against a specific commit/branch/tag instead of working directory",
 )
+@click.option(
+    "--header/--no-header",
+    default=True,
+    help="Prepend a metadata comment and 'Last updated' line to rendered output (default: on)",
+)
 def render(
     input_path,
     output_path,
@@ -99,6 +156,7 @@ def render(
     changes_base,
     strict,
     commit,
+    header,
 ):
     """
     Render Jinja2 templates to markdown.
@@ -205,11 +263,13 @@ def render(
 
         # Process based on input type
         if input_is_stdin:
-            _render_stdin(output_path, effective_repo_path, output_to_stdout, remap_dirty_lines, changes_set)
+            _render_stdin(output_path, effective_repo_path, output_to_stdout, remap_dirty_lines, changes_set, header)
         elif input_is_dir:
-            _render_directory(input_path, output_path, effective_repo_path, remap_dirty_lines, changes_set)
+            _render_directory(input_path, output_path, effective_repo_path, remap_dirty_lines, changes_set, header)
         else:
-            _render_file(input_path, output_path, effective_repo_path, output_to_stdout, remap_dirty_lines, changes_set)
+            _render_file(
+                input_path, output_path, effective_repo_path, output_to_stdout, remap_dirty_lines, changes_set, header
+            )
 
         return changes_set
 
@@ -267,7 +327,7 @@ def render(
         set_fixture_collector(None)
 
 
-def _render_stdin(output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None):
+def _render_stdin(output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None, header=False):
     """Render template from stdin."""
     # Read template from stdin
     template_content = sys.stdin.read()
@@ -280,6 +340,9 @@ def _render_stdin(output_file, repo_path, output_to_stdout, remap_dirty_lines=Fa
     # Render the template directly from string
     rendered = renderer.env.from_string(template_content).render()
 
+    if header:
+        rendered = _build_header("<stdin>", repo_path) + rendered
+
     if output_to_stdout:
         # Output to stdout
         click.echo(rendered)
@@ -290,7 +353,9 @@ def _render_stdin(output_file, repo_path, output_to_stdout, remap_dirty_lines=Fa
         console.print(f"[green]✓[/green] stdin → {output_file}")
 
 
-def _render_file(input_file, output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None):
+def _render_file(
+    input_file, output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None, header=False
+):
     """Render a single template file."""
     # Determine template directory
     template_dir = input_file.parent
@@ -303,6 +368,9 @@ def _render_file(input_file, output_file, repo_path, output_to_stdout, remap_dir
 
     try:
         rendered = renderer.render_template(template_name)
+
+        if header:
+            rendered = _build_header(template_name, repo_path) + rendered
 
         if output_to_stdout:
             # Output to stdout
@@ -318,7 +386,7 @@ def _render_file(input_file, output_file, repo_path, output_to_stdout, remap_dir
         sys.exit(1)
 
 
-def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False, changes_set=None):
+def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False, changes_set=None, header=False):
     """Render all templates in a directory."""
     templates = list(input_dir.glob("**/*.j2"))
 
@@ -352,6 +420,9 @@ def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False,
         try:
             # Render template
             rendered = renderer.render_template(str(rel_path))
+
+            if header:
+                rendered = _build_header(str(rel_path), repo_path) + rendered
 
             # Write output
             output_path_full.parent.mkdir(parents=True, exist_ok=True)
