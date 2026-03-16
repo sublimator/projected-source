@@ -1,0 +1,8 @@
+{
+  "name": "projected-source",
+  "description": "Create living documentation from code using projected-source templates",
+  "version": "0.1.0",
+  "author": {
+    "name": "Nicholas Dudfield"
+  }
+}
