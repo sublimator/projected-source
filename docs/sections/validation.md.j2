@@ -1,0 +1,29 @@
+## Change Validation
+
+One of the most powerful features: projected-source can verify that your documentation actually covers the code that changed. Run with `-V` and it diffs against a base commit, tracks which regions each `code()` call covers, and reports any gaps.
+
+### ChangesSet
+
+The `ChangesSet` class tracks changed regions as a set of non-overlapping intervals per file. It supports adding regions (which auto-merge overlapping ranges), subtracting regions (which can split intervals), and querying what's left uncovered:
+
+{{ code('projected_source/core/changes_set.py', struct='ChangesSet') }}
+
+### Building from Git Diff
+
+`from_diff()` parses unified diff output to populate the set. It supports both simple base refs (`origin/main`) and explicit ranges (`HEAD~5..HEAD~2`):
+
+{{ code('projected_source/core/changes_set.py', function='ChangesSet.from_diff') }}
+
+The diff parser walks through hunk headers and added lines to build up the initial set of changed regions:
+
+{{ code('projected_source/core/changes_set.py', function='ChangesSet._parse_diff') }}
+
+### Subtract and Query
+
+As templates render, each `code()` call subtracts its extracted region. The `subtract()` method handles partial overlaps — if documentation covers the middle of a changed region, it splits into two uncovered remainders:
+
+{{ code('projected_source/core/changes_set.py', function='ChangesSet.subtract') }}
+
+After rendering, `uncovered()` returns whatever's left:
+
+{{ code('projected_source/core/changes_set.py', function='ChangesSet.uncovered') }}

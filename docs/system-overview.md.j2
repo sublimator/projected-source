@@ -1,0 +1,36 @@
+{# projected-source: Full System Overview #}
+{# Ignore test files and CLI helper commands from validation #}
+{{ ignore_changes('tests/') }}
+{{ ignore_changes('projected_source/cli/ai_guide.py') }}
+{{ ignore_changes('projected_source/cli/bug_report.py') }}
+{{ ignore_changes('projected_source/cli/find_markers.py') }}
+
+# projected-source: System Overview
+
+**projected-source** is a documentation tool that extracts code from source files and injects it into Jinja2 templates, creating documentation that stays synchronized with the codebase. It uses tree-sitter for accurate AST-based parsing and supports C/C++, Protocol Buffers, and Python.
+
+The core idea: write narrative documentation in Markdown templates (`.md.j2`), use `{{ "{{ code() }}" }}` calls to pull in the exact code you're describing, and the rendered output always reflects the current state of the source.
+
+---
+
+{{ include('sections/data-structures.md.j2') }}
+
+---
+
+{{ include('sections/extractor-registry.md.j2') }}
+
+---
+
+{{ include('sections/rendering-pipeline.md.j2') }}
+
+---
+
+{{ include('sections/github-integration.md.j2') }}
+
+---
+
+{{ include('sections/validation.md.j2') }}
+
+---
+
+{{ include('sections/cli.md.j2') }}

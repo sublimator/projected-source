@@ -1,0 +1,23 @@
+## CLI Interface
+
+The CLI is built with Click. The main entry point registers all commands:
+
+{{ code('projected_source/cli/__init__.py', function='cli') }}
+
+### The render Command
+
+The primary command renders `.md.j2` templates. It handles single files, directories, and stdin. Key options include `--validate-changes` for coverage checking, `--commit` for rendering against historical commits, and `--remap-dirty-lines` for sharing docs from dirty working copies.
+
+Single-file rendering resolves the template path, creates a `TemplateRenderer`, and writes the output:
+
+{{ code('projected_source/cli/render.py', function='_render_file') }}
+
+Directory rendering walks the tree and renders all `.j2` files:
+
+{{ code('projected_source/cli/render.py', function='_render_directory') }}
+
+### Symbol Discovery
+
+The `list-functions` command is essential for authoring templates — it shows every extractable symbol in a file, including the parameter you'd use in a `code()` call:
+
+{{ code('projected_source/cli/list_symbols.py', function='list_functions') }}

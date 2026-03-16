@@ -1,0 +1,33 @@
+## GitHub Integration
+
+Every extracted code block can include a clickable GitHub permalink. The `GitHubIntegration` class handles the git plumbing — detecting the repository URL, mapping line numbers in dirty files to their committed counterparts, and generating blame annotations.
+
+### Lazy Initialization
+
+Repository info is loaded on first access. The class auto-detects the GitHub URL from the git remote, handling both SSH and HTTPS formats:
+
+{{ code('projected_source/core/github.py', function='GitHubIntegration._init_repo_info') }}
+
+### Dirty File Line Mapping
+
+When you're working on a file with uncommitted changes, the line numbers in your working copy won't match the committed version. The permalink needs to point to committed lines (which GitHub knows about), so the system maps working copy lines back to HEAD.
+
+The full-diff parser builds a line-by-line mapping from new to old positions:
+
+{{ code('projected_source/core/github.py', function='build_line_mapping') }}
+
+This mapping is used by `map_to_committed_line()`, which falls back gracefully — if a line was newly added, it finds the nearest existing line before it:
+
+{{ code('projected_source/core/github.py', function='map_line_to_committed_full') }}
+
+### Permalink Generation
+
+The `get_permalink()` method ties it all together — it maps lines, builds the URL with line anchors, and returns a markdown link:
+
+{{ code('projected_source/core/github.py', function='GitHubIntegration.get_permalink') }}
+
+### Blame Support
+
+For deeper code archaeology, `blame=True` annotates each line with its author, date, and commit hash:
+
+{{ code('projected_source/core/github.py', function='GitHubIntegration.format_with_blame') }}

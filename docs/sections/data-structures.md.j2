@@ -1,0 +1,17 @@
+## Data Structures
+
+Before diving into how extraction works, let's look at the types that flow through the system.
+
+### ExtractionResult
+
+Every time code is extracted from a source file — whether a function, struct, or marker region — the result is packaged as an `ExtractionResult`. This dataclass carries the extracted text along with precise location metadata:
+
+{{ code('projected_source/languages/extraction_result.py', struct='ExtractionResult') }}
+
+The `to_tuple()` method exists for backwards compatibility — most of the extraction API still returns `(text, start_line, end_line)` tuples directly, but the internal parsers work with `ExtractionResult` objects that carry richer metadata like the tree-sitter node and qualified name.
+
+### ChangeRegion
+
+When validating that documentation covers code changes, individual changed regions are represented as `ChangeRegion` — a simple dataclass tying a file path to a line range:
+
+{{ code('projected_source/core/changes_set.py', struct='ChangeRegion') }}

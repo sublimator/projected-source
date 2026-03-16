@@ -1,0 +1,37 @@
+## The Rendering Pipeline
+
+The `TemplateRenderer` is the heart of the system. It creates a Jinja2 environment and registers three template functions — `code()`, `include()`, and `ignore_changes()` — that templates use to pull in live code.
+
+### Initialization
+
+When a renderer is created, it sets up the Jinja2 environment with the template directory as the loader root, and registers the extraction functions as globals:
+
+{{ code('projected_source/core/renderer.py', function='TemplateRenderer.__init__') }}
+
+### The code() Function
+
+This is the workhorse. Every `{{ "{{ code('file.cpp', function='foo') }}" }}` call in a template invokes `_code_function`. It resolves the file path, picks the right extractor, extracts the requested symbol, optionally generates a GitHub permalink, adds line numbers, and returns formatted markdown:
+
+{{ code('projected_source/core/renderer.py', function='TemplateRenderer._code_function') }}
+
+The function handles a wide variety of extraction types — functions, structs, variables, macros, protobuf messages, enums, services, markers, and raw line ranges. It also supports nesting: you can extract a marker *within* a function by passing both `function=` and `marker=`.
+
+When a `ChangesSet` is provided (validation mode), each extraction automatically calls `subtract()` to mark those lines as documented.
+
+### The include() Function
+
+Templates can compose by including other files. Plain markdown files are included verbatim; `.j2` files are rendered as templates with full access to `code()` and other functions:
+
+{{ code('projected_source/core/renderer.py', function='TemplateRenderer._include_function') }}
+
+### Custom Tags
+
+Projects can extend the template environment by placing a `.projected-source.py` file in the project. The renderer discovers it by walking up from the template directory to the git root:
+
+{{ code('projected_source/core/renderer.py', function='TemplateRenderer._find_custom_tags_file') }}
+
+### Rendering
+
+The public API is straightforward — `render_template()` for named templates and `render_template_file()` for file paths:
+
+{{ code('projected_source/core/renderer.py', function='TemplateRenderer.render_template') }}

@@ -1,0 +1,19 @@
+## The Extractor Registry
+
+The system supports multiple languages through a simple registry pattern. Each file extension maps to an extractor class:
+
+{{ code('projected_source/languages/__init__.py', var='EXTRACTORS') }}
+
+When a `code()` call needs to extract from a file, it calls `get_extractor()` which looks up the right class by file extension and instantiates it:
+
+{{ code('projected_source/languages/__init__.py', function='get_extractor') }}
+
+### BaseExtractor
+
+All language extractors inherit from `BaseExtractor`, which provides the tree-sitter parser setup, line extraction, and the marker system. The marker system lets you tag regions of source code with `//@@start name` and `//@@end name` comments, then extract just that region:
+
+{{ code('projected_source/core/extractor.py', struct='BaseExtractor') }}
+
+The `find_markers_in_node` method is particularly interesting — it uses tree-sitter queries to find comments, then applies regex to identify marker directives. This two-step approach handles the fact that tree-sitter's predicate support varies across language grammars.
+
+Each language subclass must implement `extract_function()` at minimum, but the C++ extractor goes much further with support for namespaces, templates, overloads, macros, and nested classes.
