@@ -8,6 +8,7 @@ from pathlib import Path
 from .cpp import CppExtractor
 from .proto import ProtoExtractor
 from .python import PythonExtractor
+from .typescript import TypeScriptExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,10 @@ EXTRACTORS = {
     ".proto": ProtoExtractor,  # Protocol Buffers
     ".py": PythonExtractor,  # Python
     ".pyi": PythonExtractor,  # Python type stubs
+    ".ts": TypeScriptExtractor,  # TypeScript
+    ".tsx": TypeScriptExtractor,  # TSX (React) — tsx=True set via get_extractor
+    ".mts": TypeScriptExtractor,  # TypeScript ES module
+    ".cts": TypeScriptExtractor,  # TypeScript CommonJS module
 }
 
 
@@ -50,6 +55,8 @@ def get_extractor(file_path: Path):
         raise ValueError(f"No extractor for {suffix} files. Supported: {supported}")
 
     extractor_class = EXTRACTORS[suffix]
+    if extractor_class is TypeScriptExtractor and suffix == ".tsx":
+        return extractor_class(tsx=True)
     return extractor_class()
 
 
