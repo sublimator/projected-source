@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union
 
 import jinja2
+from jinja2 import nodes
+from jinja2.ext import Extension
 
 from ..languages import get_extractor
 from .github import GitHubIntegration
@@ -17,6 +19,25 @@ if TYPE_CHECKING:
     from .changes_set import ChangesSet
 
 logger = logging.getLogger(__name__)
+
+
+class CodeRootExtension(Extension):
+    """Jinja2 extension for {% code_root 'path' %}...{% endcode_root %} blocks."""
+
+    tags = {"code_root"}
+
+    def parse(self, parser):
+        lineno = next(parser.stream).lineno
+        args = [parser.parse_expression()]
+        body = parser.parse_statements(["name:endcode_root"], drop_needle=True)
+        return nodes.CallBlock(self.call_method("_set_code_root", args), [], [], body).set_lineno(lineno)
+
+    def _set_code_root(self, path, caller):
+        old = self.environment.globals.get("code_root", "")
+        self.environment.globals["code_root"] = path
+        rv = caller()
+        self.environment.globals["code_root"] = old
+        return rv
 
 
 def _collect_error_fixture(file_path: Path, error: str, template_context: str = None):
@@ -60,7 +81,10 @@ class TemplateRenderer:
 
         # Create Jinja2 environment
         self.env = jinja2.Environment(
-            loader=jinja2.FileSystemLoader(str(self.template_dir)), trim_blocks=True, lstrip_blocks=True
+            loader=jinja2.FileSystemLoader(str(self.template_dir)),
+            trim_blocks=True,
+            lstrip_blocks=True,
+            extensions=[CodeRootExtension],
         )
 
         # Register custom functions
@@ -68,6 +92,7 @@ class TemplateRenderer:
         self.env.globals["ghc"] = self._code_function  # Alias for compatibility
         self.env.globals["ignore_changes"] = self._ignore_changes_function
         self.env.globals["include"] = self._include_function
+        self.env.globals["set_code_root"] = self._set_code_root_function
 
         # Load project-specific custom tags if available
         # (loaded on-demand when rendering templates)
@@ -127,6 +152,11 @@ class TemplateRenderer:
             {{ code('src/proto/file.proto', enum='MyEnum') }}
         """
         try:
+            # Apply code_root prefix if set (via {% code_root %} block)
+            code_root = str(self.env.globals.get("code_root", ""))
+            if code_root and not Path(file_path).is_absolute():
+                file_path = str(Path(code_root) / file_path)
+
             # Resolve file path relative to repo
             resolved_path = Path(file_path)
             if not resolved_path.is_absolute():
@@ -333,6 +363,11 @@ class TemplateRenderer:
         if self.changes_set is None:
             return ""
 
+        # Apply code_root prefix if set (via {% code_root %} block)
+        code_root = str(self.env.globals.get("code_root", ""))
+        if code_root and not Path(file_path).is_absolute():
+            file_path = str(Path(code_root) / file_path)
+
         resolved_path = Path(file_path)
         if not resolved_path.is_absolute():
             resolved_path = self.repo_path / resolved_path
@@ -396,6 +431,21 @@ class TemplateRenderer:
         else:
             full_path = self.template_dir / path
             return full_path.read_text()
+
+    def _set_code_root_function(self, path: str) -> str:
+        """
+        Set the code_root globally for all subsequent code() calls.
+
+        Unlike {% code_root %} blocks, this does not scope — it persists
+        until changed. Use '' to clear.
+
+        Examples:
+            {{ set_code_root('src/rippled/app') }}
+            {{ code('Handler.cpp', function='process') }}
+            {{ set_code_root('') }}
+        """
+        self.env.globals["code_root"] = path
+        return ""
 
     def _find_custom_tags_file(self, start_path: Path) -> Optional[Path]:
         """
