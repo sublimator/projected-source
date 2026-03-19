@@ -5,6 +5,8 @@ Jinja2 template rendering with code extraction functions.
 from __future__ import annotations
 
 import logging
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union
 
@@ -21,22 +23,38 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class CodeRootExtension(Extension):
-    """Jinja2 extension for {% code_root 'path' %}...{% endcode_root %} blocks."""
+class CodeContextExtension(Extension):
+    """Jinja2 extension for {% code_context root='path', ref='branch' %}...{% endcode_context %} blocks."""
 
-    tags = {"code_root"}
+    tags = {"code_context"}
 
     def parse(self, parser):
         lineno = next(parser.stream).lineno
-        args = [parser.parse_expression()]
-        body = parser.parse_statements(["name:endcode_root"], drop_needle=True)
-        return nodes.CallBlock(self.call_method("_set_code_root", args), [], [], body).set_lineno(lineno)
+        # Parse keyword arguments
+        kwargs = []
+        while parser.stream.current.test("name") and parser.stream.look().test("assign"):
+            key = parser.stream.expect("name").value
+            parser.stream.expect("assign")
+            value = parser.parse_expression()
+            kwargs.append(nodes.Keyword(key, value, lineno=lineno))
+            if parser.stream.current.test("comma"):
+                next(parser.stream)
 
-    def _set_code_root(self, path, caller):
-        old = self.environment.globals.get("code_root", "")
-        self.environment.globals["code_root"] = path
+        body = parser.parse_statements(["name:endcode_context"], drop_needle=True)
+
+        node = nodes.CallBlock(self.call_method("_set_context", [], kwargs), [], [], body).set_lineno(lineno)
+        return node
+
+    def _set_context(self, root=None, ref=None, caller=None):
+        old_root = self.environment.globals.get("code_root", "")
+        old_ref = self.environment.globals.get("code_ref", "")
+        if root is not None:
+            self.environment.globals["code_root"] = root
+        if ref is not None:
+            self.environment.globals["code_ref"] = ref
         rv = caller()
-        self.environment.globals["code_root"] = old
+        self.environment.globals["code_root"] = old_root
+        self.environment.globals["code_ref"] = old_ref
         return rv
 
 
@@ -84,7 +102,7 @@ class TemplateRenderer:
             loader=jinja2.FileSystemLoader(str(self.template_dir)),
             trim_blocks=True,
             lstrip_blocks=True,
-            extensions=[CodeRootExtension],
+            extensions=[CodeContextExtension],
         )
 
         # Register custom functions
@@ -92,6 +110,7 @@ class TemplateRenderer:
         self.env.globals["ghc"] = self._code_function  # Alias for compatibility
         self.env.globals["ignore_changes"] = self._ignore_changes_function
         self.env.globals["include"] = self._include_function
+        self.env.globals["set_code_context"] = self._set_code_context_function
         self.env.globals["set_code_root"] = self._set_code_root_function
 
         # Load project-specific custom tags if available
@@ -115,6 +134,7 @@ class TemplateRenderer:
         blame: bool = False,
         line_numbers: bool = True,
         language: str = None,
+        ref: str = None,
     ) -> str:
         """
         Universal code extraction function for templates.
@@ -151,16 +171,38 @@ class TemplateRenderer:
             {{ code('src/proto/file.proto', message='MyMessage') }}
             {{ code('src/proto/file.proto', enum='MyEnum') }}
         """
+        tmp_file = None
         try:
-            # Apply code_root prefix if set (via {% code_root %} block)
+            # Apply code_root prefix if set (via {% code_context %} block)
             code_root = str(self.env.globals.get("code_root", ""))
             if code_root and not Path(file_path).is_absolute():
                 file_path = str(Path(code_root) / file_path)
+
+            # Determine active ref (per-call overrides context)
+            active_ref = ref or str(self.env.globals.get("code_ref", ""))
 
             # Resolve file path relative to repo
             resolved_path = Path(file_path)
             if not resolved_path.is_absolute():
                 resolved_path = self.repo_path / resolved_path
+
+            # If a git ref is active, fetch file content from that ref
+            if active_ref:
+                rel_path = file_path
+                # Ensure relative path for git show
+                try:
+                    rel_path = str(Path(file_path).relative_to(self.repo_path))
+                except ValueError:
+                    # Already relative
+                    rel_path = file_path
+                content = subprocess.check_output(
+                    ["git", "show", f"{active_ref}:{rel_path}"],
+                    cwd=self.repo_path,
+                    stderr=subprocess.DEVNULL,
+                )
+                tmp_file = Path(tempfile.mktemp(suffix=resolved_path.suffix))
+                tmp_file.write_bytes(content)
+                resolved_path = tmp_file
 
             # Get the appropriate extractor
             extractor = get_extractor(resolved_path)
@@ -275,40 +317,44 @@ class TemplateRenderer:
                     f"macro_definition, lines, or marker for {file_path}"
                 )
 
+            # Use original file path for display (not temp file)
+            display_path = self.repo_path / file_path if not Path(file_path).is_absolute() else Path(file_path)
+
             # Track this region as covered if we have a ChangesSet
-            if self.changes_set is not None:
-                self.changes_set.subtract(resolved_path, start_line, end_line)
+            if self.changes_set is not None and not active_ref:
+                self.changes_set.subtract(display_path, start_line, end_line)
 
             # Remap line numbers if requested (for sharing docs from dirty files)
             display_start = start_line
             display_end = end_line
-            if self.remap_dirty_lines:
-                display_start = self.github.map_to_committed_line(resolved_path, start_line)
-                display_end = self.github.map_to_committed_line(resolved_path, end_line)
+            if self.remap_dirty_lines and not active_ref:
+                display_start = self.github.map_to_committed_line(display_path, start_line)
+                display_end = self.github.map_to_committed_line(display_path, end_line)
 
             # Build header with GitHub permalink if requested
-            if github:
+            if github and not active_ref:
                 header = self.github.get_permalink(
-                    resolved_path, start_line, end_line, display_committed_lines=self.remap_dirty_lines
+                    display_path, start_line, end_line, display_committed_lines=self.remap_dirty_lines
                 )
             else:
-                rel_path = resolved_path.relative_to(self.repo_path) if resolved_path.is_absolute() else resolved_path
+                display_rel = display_path.relative_to(self.repo_path) if display_path.is_absolute() else display_path
+                ref_suffix = f" @ {active_ref}" if active_ref else ""
                 if display_start == display_end:
-                    header = f"📍 `{rel_path}:{display_start}`"
+                    header = f"📍 `{display_rel}:{display_start}{ref_suffix}`"
                 else:
-                    header = f"📍 `{rel_path}:{display_start}-{display_end}`"
+                    header = f"📍 `{display_rel}:{display_start}-{display_end}{ref_suffix}`"
 
             # Format code with line numbers and/or blame
             # Use remapped line numbers for display if remap_dirty_lines is enabled
             code_start_line = display_start if self.remap_dirty_lines else start_line
-            if blame:
-                code_text = self.github.format_with_blame(code_text, code_start_line, resolved_path)
+            if blame and not active_ref:
+                code_text = self.github.format_with_blame(code_text, code_start_line, display_path)
             elif line_numbers:
                 code_text = self._add_line_numbers(code_text, code_start_line)
 
             # Auto-detect language if not specified
             if not language:
-                suffix = resolved_path.suffix.lower()
+                suffix = display_path.suffix.lower()
                 language_map = {
                     ".cpp": "cpp",
                     ".cc": "cpp",
@@ -342,6 +388,11 @@ class TemplateRenderer:
             _collect_error_fixture(resolved_path, str(e))
             return error_msg
 
+        finally:
+            # Clean up temp file if we created one
+            if tmp_file and tmp_file.exists():
+                tmp_file.unlink()
+
     def _ignore_changes_function(
         self,
         file_path: str,
@@ -352,6 +403,7 @@ class TemplateRenderer:
         macro_definition: str = None,
         lines: Tuple[int, int] = None,
         marker: str = None,
+        ref: str = None,
     ) -> str:
         """
         Ignore specified regions from change validation.
@@ -366,10 +418,13 @@ class TemplateRenderer:
         if self.changes_set is None:
             return ""
 
-        # Apply code_root prefix if set (via {% code_root %} block)
+        # Apply code_root prefix if set (via {% code_context %} block)
         code_root = str(self.env.globals.get("code_root", ""))
         if code_root and not Path(file_path).is_absolute():
             file_path = str(Path(code_root) / file_path)
+
+        # Determine active ref (per-call overrides context)
+        active_ref = ref or str(self.env.globals.get("code_ref", ""))
 
         resolved_path = Path(file_path)
         if not resolved_path.is_absolute():
@@ -384,21 +439,39 @@ class TemplateRenderer:
             return ""
 
         # Use extractors to find the region, same as code()
+        tmp_file = None
         try:
-            extractor = get_extractor(resolved_path)
+            # If a git ref is active, fetch file content from that ref
+            extract_path = resolved_path
+            if active_ref:
+                rel_path = file_path
+                try:
+                    rel_path = str(Path(file_path).relative_to(self.repo_path))
+                except ValueError:
+                    rel_path = file_path
+                content = subprocess.check_output(
+                    ["git", "show", f"{active_ref}:{rel_path}"],
+                    cwd=self.repo_path,
+                    stderr=subprocess.DEVNULL,
+                )
+                tmp_file = Path(tempfile.mktemp(suffix=resolved_path.suffix))
+                tmp_file.write_bytes(content)
+                extract_path = tmp_file
+
+            extractor = get_extractor(extract_path)
 
             if function:
-                _, start_line, end_line = extractor.extract_function(resolved_path, function)
+                _, start_line, end_line = extractor.extract_function(extract_path, function)
             elif function_macro:
                 macro_spec = {"name": function_macro} if isinstance(function_macro, str) else function_macro
-                _, start_line, end_line = extractor.extract_function_macro(resolved_path, macro_spec)
+                _, start_line, end_line = extractor.extract_function_macro(extract_path, macro_spec)
             elif macro_definition:
-                _, start_line, end_line = extractor.extract_macro_definition(resolved_path, macro_definition)
+                _, start_line, end_line = extractor.extract_macro_definition(extract_path, macro_definition)
             elif struct or var:
                 name = struct or var
-                _, start_line, end_line = extractor.extract_struct(resolved_path, name)
+                _, start_line, end_line = extractor.extract_struct(extract_path, name)
             elif marker:
-                _, start_line, end_line = extractor.extract_marker(resolved_path, marker)
+                _, start_line, end_line = extractor.extract_marker(extract_path, marker)
             elif lines:
                 start_line, end_line = lines
 
@@ -407,6 +480,10 @@ class TemplateRenderer:
 
         except Exception as e:
             logger.warning(f"Failed to extract region for ignore_changes: {e}")
+
+        finally:
+            if tmp_file and tmp_file.exists():
+                tmp_file.unlink()
 
         return ""
 
@@ -435,12 +512,30 @@ class TemplateRenderer:
             full_path = self.template_dir / path
             return full_path.read_text()
 
+    def _set_code_context_function(self, root: str = None, ref: str = None) -> str:
+        """
+        Set code_root and/or code_ref globally for all subsequent code() calls.
+
+        Unlike {% code_context %} blocks, this does not scope — it persists
+        until changed. Use '' to clear.
+
+        Examples:
+            {{ set_code_context(root='src/rippled/app') }}
+            {{ set_code_context(ref='v1.0') }}
+            {{ set_code_context(root='src', ref='main') }}
+            {{ set_code_context(root='', ref='') }}
+        """
+        if root is not None:
+            self.env.globals["code_root"] = root
+        if ref is not None:
+            self.env.globals["code_ref"] = ref
+        return ""
+
     def _set_code_root_function(self, path: str) -> str:
         """
         Set the code_root globally for all subsequent code() calls.
 
-        Unlike {% code_root %} blocks, this does not scope — it persists
-        until changed. Use '' to clear.
+        Alias for set_code_context(root=path). Kept for backward compatibility.
 
         Examples:
             {{ set_code_root('src/rippled/app') }}
