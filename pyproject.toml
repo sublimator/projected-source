@@ -17,6 +17,7 @@ dependencies = [
     "rich>=14.0",
     "gitpython>=3.1.45",
     "tree-sitter-typescript>=0.23.2",
+    "tree-sitter-java>=0.23.5",
 ]
 
 [project.scripts]

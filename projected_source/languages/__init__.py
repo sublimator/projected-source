@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 from .cpp import CppExtractor
+from .java import JavaExtractor
 from .proto import ProtoExtractor
 from .python import PythonExtractor
 from .typescript import TypeScriptExtractor
@@ -32,6 +33,7 @@ EXTRACTORS = {
     ".tsx": TypeScriptExtractor,  # TSX (React) — tsx=True set via get_extractor
     ".mts": TypeScriptExtractor,  # TypeScript ES module
     ".cts": TypeScriptExtractor,  # TypeScript CommonJS module
+    ".java": JavaExtractor,  # Java
 }
 
 
