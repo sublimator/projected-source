@@ -4,16 +4,39 @@ AI guide command - outputs comprehensive guide for AI assistants.
 
 import click
 
+from ..languages import EXTRACTORS
+
+
+def _build_supported_languages() -> str:
+    """Build a dynamic list of supported languages from the extractor registry."""
+    # Group extensions by extractor class name
+    by_extractor: dict[str, list[str]] = {}
+    for ext, cls in EXTRACTORS.items():
+        name = cls.__name__ if hasattr(cls, "__name__") else str(cls)
+        by_extractor.setdefault(name, []).append(ext)
+
+    lines = []
+    for name, exts in by_extractor.items():
+        label = name.replace("Extractor", "")
+        lines.append(f"- **{label}**: {', '.join(sorted(exts))}")
+    return "\n".join(lines)
+
 
 @click.command("ai-guide")
 def ai_guide():
     """Output comprehensive guide for AI assistants."""
-    guide = """# projected-source AI Guide
+    supported = _build_supported_languages()
+
+    guide = f"""# projected-source AI Guide
 
 ## Overview
-projected-source extracts code from C/C++ and Protocol Buffer (.proto) files
-into Jinja2 templates, creating documentation that stays in sync with the
-codebase. Uses tree-sitter for accurate parsing.
+projected-source extracts code from source files into Jinja2 templates,
+creating documentation that stays in sync with the codebase. Uses tree-sitter
+for accurate AST-based parsing.
+
+### Supported Languages
+
+{supported}
 
 ## IMPORTANT: Prefer Symbolic References
 
@@ -21,19 +44,15 @@ codebase. Uses tree-sitter for accurate parsing.
 
 Extraction priority (best to worst):
 1. `function='Name'` - functions, methods (use `signature=` for overloads)
-2. `struct='Name'` / `var='Name'` - types, constants, variables (C/C++)
+2. `struct='Name'` / `var='Name'` - types, constants, variables
 3. `message='Name'` / `enum='Name'` / `service='Name'` - protobuf definitions
-4. `function_macro=` / `macro_definition=` - macro-based code
+4. `function_macro=` / `macro_definition=` - C/C++ macro-based code
 5. `function='X', marker='Y'` - subsection within a function (when needed)
 6. `marker='X'` - standalone markers (last resort)
 7. `lines=(start, end)` - fragile, breaks when code changes
 
 **Why?** Symbolic refs survive refactoring. If someone renames a function,
 you get a clear error. With line numbers, you silently get wrong code.
-
-**Markers are for:** Extracting a specific subsection of a larger construct,
-e.g., just the initialization part of a 200-line function. Not for extracting
-whole functions - use `function=` for that.
 
 ## CLI Usage
 
@@ -47,10 +66,11 @@ projected-source render template.md.j2 output.md
 # Render directory of templates
 projected-source render docs/
 
+# Discover extractable symbols in a file
+projected-source list-functions src/file.cpp
+
 # Validate documentation covers code changes
 projected-source render docs/ -V auto              # auto-detect base
-projected-source render docs/ -V origin/main       # specific base
-projected-source render docs/ -V HEAD~5..HEAD~2    # commit range
 projected-source render docs/ -V auto --strict     # exit 1 if uncovered
 ```
 
@@ -59,88 +79,100 @@ projected-source render docs/ -V auto --strict     # exit 1 if uncovered
 ### code() - Extract code with GitHub permalinks
 
 ```jinja
-{# Extract a function #}
-{{ code('src/file.cpp', function='processTransaction') }}
+{{{{ code('src/file.cpp', function='processTransaction') }}}}
+{{{{ code('src/file.cpp', function='onMessage', signature='TMProposeSet') }}}}
+{{{{ code('src/file.h', struct='Config') }}}}
+{{{{ code('src/file.cpp', var='errorCodes') }}}}
+{{{{ code('src/file.cpp', marker='example-usage') }}}}
+{{{{ code('src/file.cpp', function='main', marker='init-section') }}}}
 
-{# Extract overloaded function by signature #}
-{{ code('src/file.cpp', function='onMessage', signature='TMProposeSet') }}
+{{# C/C++ macros #}}
+{{{{ code('src/file.cpp', function_macro={{'name': 'DEFINE_HANDLER', 'arg0': 'onConnect'}}) }}}}
+{{{{ code('src/file.h', macro_definition='MAX_BUFFER_SIZE') }}}}
 
-{# Extract a struct/class/enum #}
-{{ code('src/file.h', struct='Config') }}
+{{# Protocol Buffers #}}
+{{{{ code('src/messages.proto', message='Transaction') }}}}
+{{{{ code('src/messages.proto', enum='MessageType') }}}}
+{{{{ code('src/messages.proto', service='PeerService') }}}}
 
-{# Extract a variable/constant declaration #}
-{{ code('src/file.cpp', var='errorCodes') }}
+{{# Java #}}
+{{{{ code('src/Handler.java', function='Handler.process') }}}}
+{{{{ code('src/Handler.java', struct='Handler') }}}}
+{{{{ code('src/Handler.java', var='Handler.MAX_SIZE') }}}}
 
-{# Extract lines by range #}
-{{ code('src/file.cpp', lines=(10, 50)) }}
+{{# TypeScript #}}
+{{{{ code('src/api.ts', function='handleRequest') }}}}
+{{{{ code('src/api.ts', function='Service.process') }}}}
+{{{{ code('src/api.ts', struct='Config') }}}}        {{# class, interface, or type alias #}}
+{{{{ code('src/api.ts', enum='Status') }}}}
 
-{# Extract between markers #}
-{{ code('src/file.cpp', marker='example-usage') }}
-{# In source: //@@start example-usage ... //@@end example-usage #}
+{{# Python #}}
+{{{{ code('src/app.py', function='process') }}}}
+{{{{ code('src/app.py', function='Handler.run') }}}}
+{{{{ code('src/app.py', struct='Handler') }}}}
+{{{{ code('src/app.py', var='MAX_SIZE') }}}}
 
-{# Extract marker within a function #}
-{{ code('src/file.cpp', function='main', marker='init-section') }}
-
-{# Extract macro-defined function #}
-{{ code('src/file.cpp', function_macro={'name': 'DEFINE_HANDLER', 'arg0': 'onConnect'}) }}
-
-{# Extract macro definition #}
-{{ code('src/file.h', macro_definition='MAX_BUFFER_SIZE') }}
-
-{# Protocol Buffers (.proto) #}
-{{ code('src/proto/messages.proto', message='Transaction') }}
-{{ code('src/proto/messages.proto', enum='MessageType') }}
-{{ code('src/proto/messages.proto', service='PeerService') }}
-{{ code('src/proto/messages.proto', message='Transaction', marker='key-fields') }}
-
-{# Options #}
-{{ code('src/file.cpp', function='foo', github=False) }}      {# no permalink #}
-{{ code('src/file.cpp', function='foo', line_numbers=False) }} {# no line nums #}
-{{ code('src/file.cpp', function='foo', blame=True) }}         {# git blame #}
-{{ code('src/file.cpp', function='foo', language='cpp') }}     {# force language #}
+{{# Options #}}
+{{{{ code('src/file.cpp', function='foo', github=False) }}}}      {{# no permalink #}}
+{{{{ code('src/file.cpp', function='foo', line_numbers=False) }}}} {{# no line nums #}}
+{{{{ code('src/file.cpp', function='foo', blame=True) }}}}         {{# git blame #}}
+{{{{ code('src/file.cpp', function='foo', ref='v1.0') }}}}         {{# from git ref #}}
+{{{{ code('src/file.cpp', function='foo', root='/path/to/repo') }}}} {{# different root #}}
 ```
 
 ### include() - Include peer files
 
 ```jinja
-{# Include raw markdown (no template processing) #}
-{{ include('background.md') }}
-
-{# Include and render a Jinja2 template (has access to code() etc) #}
-{{ include('details.md.j2') }}
-
-{# Include from subdirectory #}
-{{ include('sections/intro.md') }}
+{{{{ include('background.md') }}}}       {{# raw markdown, no template processing #}}
+{{{{ include('details.md.j2') }}}}       {{# rendered as Jinja2 template #}}
 ```
 
 Paths are relative to the template directory. `.j2` files are rendered as
-templates with full access to `code()` and other functions. All other files
-are included as raw text (Jinja2 syntax in them is NOT processed).
+templates with full access to `code()` and other functions.
 
-### ignore_changes() - Exclude regions from validation
-
-When using `-V` to validate documentation coverage, use `ignore_changes()` to
-exclude files or regions that don't need documentation:
+### code_context - Set root path and git ref for a block
 
 ```jinja
-{# Ignore entire file #}
-{{ ignore_changes('Builds/CMake/config.cmake') }}
+{{# Scoped block - root and ref revert after endcode_context #}}
+{{% code_context root='src/app', ref='develop' %}}
+  {{{{ code('Handler.cpp', function='process') }}}}
+{{% endcode_context %}}
 
-{# Ignore specific constructs (same syntax as code()) #}
-{{ ignore_changes('src/file.cpp', function='internalHelper') }}
-{{ ignore_changes('src/file.cpp', struct='PrivateImpl') }}
-{{ ignore_changes('src/file.cpp', lines=(1, 100)) }}
-{{ ignore_changes('src/test/Test.cpp') }}  {# ignore test files #}
+{{# Global - persists until changed #}}
+{{{{ set_code_context(root='src/app', ref='v1.0') }}}}
+{{{{ code('Handler.cpp', function='process') }}}}
+{{{{ set_code_context(root='', ref='') }}}}
+```
+
+### Multi-repo documentation
+
+Use `{{% set %}}` to define repo paths, then use `root=` on code() or code_context:
+
+```jinja
+{{% set backend = '/path/to/backend' %}}
+{{% set frontend = '/path/to/frontend' %}}
+
+{{% code_context root=backend %}}
+  {{{{ code('src/api/handler.cpp', function='process') }}}}
+{{% endcode_context %}}
+
+{{{{ code('src/App.tsx', struct='App', root=frontend) }}}}
 ```
 
 ## Marker Syntax in Source Files
 
-Works in both C/C++ and .proto files:
-
 ```cpp
+// C/C++, Java, TypeScript, Protobuf
 //@@start section-name
 code here
 //@@end section-name
+```
+
+```python
+# Python
+#@@start section-name
+code here
+#@@end section-name
 ```
 
 ## Output Format
@@ -150,38 +182,23 @@ code() outputs markdown with:
 2. Fenced code block with syntax highlighting
 3. Line numbers matching the source file
 
-Example output:
+Example:
 ```
 📍 [`src/main.cpp:42-58`](https://github.com/org/repo/blob/abc123/src/main.cpp#L42-L58)
-```cpp
-  42 void processTransaction() {
+\\```cpp
+  42 void processTransaction() {{
   43     // implementation
-  44 }
-```
-
-## Validation Mode (-V)
-
-Shows uncovered code changes with actual source:
-
-```
-⚠ 3 uncovered regions:
-
-━━━ src/handlers/Submit.cpp ━━━
-230-261:
-   230 void handleSubmit() {
-   231     // new code not documented
-   ...
+  44 }}
+\\```
 ```
 
 ## Tips for AI Assistants
 
-1. **Prefer symbolic refs** - Use `function=`, `struct=`, `message=`, `enum=` instead of markers
-2. **Use `signature=` for overloads** - e.g., `function='onMessage', signature='TMProposeSet'`
-3. **Markers only for subsections** - When you need part of a function/message, not the whole thing
-4. **Never use line ranges** unless absolutely necessary - they break on any edit
-5. **Use relative paths** from repo root in code() calls
-6. **Use ignore_changes()** at the top of templates for test files, build configs
-7. **Check -V output** to ensure all changes are documented
-8. **Proto files** - Use `message=`, `enum=`, `service=` for .proto extraction
+1. **Prefer symbolic refs** - `function=`, `struct=`, `message=`, `enum=` over markers/lines
+2. **Use `signature=` for C++ overloads** - e.g., `function='onMessage', signature='TMProposeSet'`
+3. **Dotted paths for methods** - `function='Class.method'` works in Java, TypeScript, Python
+4. **Use `list-functions`** to discover extractable symbols in any supported file
+5. **Use `ref=`** to extract code from any git branch, tag, or commit
+6. **Use `root=`** with absolute paths for multi-repo documentation
 """
     click.echo(guide)
