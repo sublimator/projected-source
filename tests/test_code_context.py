@@ -157,6 +157,50 @@ class TestCodeContext:
         result = renderer.render_template("doc.md.j2")
         assert "def a():" in result
 
+    def test_code_root_per_call(self, tmp_path):
+        """root= on code() overrides context code_root."""
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "mod.py").write_text("def hello():\n    pass\n")
+        other_dir = tmp_path / "other"
+        other_dir.mkdir()
+        (other_dir / "mod.py").write_text("def world():\n    pass\n")
+
+        template = tmp_path / "doc.md.j2"
+        template.write_text(
+            "{%% code_context root='%s/src' %%}\n"
+            "{{ code('mod.py', function='hello', github=False) }}\n"
+            "{{ code('mod.py', function='world', github=False, root='%s/other') }}\n"
+            "{%% endcode_context %%}\n" % (tmp_path, tmp_path)
+        )
+
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+        result = renderer.render_template("doc.md.j2")
+        assert "def hello():" in result
+        assert "def world():" in result
+
+    def test_code_root_per_call_with_set_var(self, tmp_path):
+        """root= works with {% set %} variables."""
+        proj_a = tmp_path / "project_a" / "src"
+        proj_a.mkdir(parents=True)
+        (proj_a / "app.py").write_text("def run_a():\n    pass\n")
+        proj_b = tmp_path / "project_b" / "src"
+        proj_b.mkdir(parents=True)
+        (proj_b / "app.py").write_text("def run_b():\n    pass\n")
+
+        template = tmp_path / "doc.md.j2"
+        template.write_text(
+            "{%% set proj_a = '%s/project_a' %%}\n"
+            "{%% set proj_b = '%s/project_b' %%}\n"
+            "{{ code('src/app.py', function='run_a', github=False, root=proj_a) }}\n"
+            "{{ code('src/app.py', function='run_b', github=False, root=proj_b) }}\n" % (tmp_path, tmp_path)
+        )
+
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+        result = renderer.render_template("doc.md.j2")
+        assert "def run_a():" in result
+        assert "def run_b():" in result
+
     def test_ignore_changes_respects_code_context(self, tmp_path):
         """ignore_changes() also resolves via code_context root."""
         src_dir = tmp_path / "src"

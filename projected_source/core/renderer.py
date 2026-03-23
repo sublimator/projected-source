@@ -135,6 +135,7 @@ class TemplateRenderer:
         line_numbers: bool = True,
         language: str = None,
         ref: str = None,
+        root: str = None,
     ) -> str:
         """
         Universal code extraction function for templates.
@@ -173,8 +174,8 @@ class TemplateRenderer:
         """
         tmp_file = None
         try:
-            # Apply code_root prefix if set (via {% code_context %} block)
-            code_root = str(self.env.globals.get("code_root", ""))
+            # Apply root prefix: per-call root= overrides context code_root
+            code_root = root or str(self.env.globals.get("code_root", ""))
             if code_root and not Path(file_path).is_absolute():
                 file_path = str(Path(code_root) / file_path)
 
