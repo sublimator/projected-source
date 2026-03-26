@@ -106,30 +106,53 @@ class SimpleCppParser:
             elif node.type in ["class_specifier", "struct_specifier", "enum_specifier"]:
                 # Get the class/struct/enum name
                 class_name = None
+                class_qualifiers = []
                 for child in node.children:
                     if child.type == "type_identifier":
                         class_name = node_text(child)
+                        break
+                    elif child.type == "qualified_identifier":
+                        # Handle class HttpServer::Impl pattern
+                        parts = []
+                        current_qi = child
+                        while current_qi and current_qi.type == "qualified_identifier":
+                            found_nested = False
+                            for qi_child in current_qi.children:
+                                if qi_child.type in ["namespace_identifier", "identifier"]:
+                                    parts.append(node_text(qi_child))
+                                elif qi_child.type == "type_identifier":
+                                    parts.append(node_text(qi_child))
+                                elif qi_child.type == "qualified_identifier":
+                                    current_qi = qi_child
+                                    found_nested = True
+                                    break
+                            if not found_nested:
+                                break
+                        if parts:
+                            class_name = parts[-1]
+                            class_qualifiers = parts[:-1]
                         break
 
                 logger.debug(f"{indent}Found {node.type}: {class_name}")
 
                 # Check if this is the struct/class we're looking for
+                full_context = context_stack + class_qualifiers
                 if node.type in node_types and class_name == target_leaf_name:
                     # Check if qualifiers match
                     if not qualifiers:
                         logger.info(f"{indent}  MATCH FOUND (no qualifiers required)")
                         return node
-                    elif context_stack == qualifiers:
+                    elif full_context == qualifiers:
                         logger.info(f"{indent}  MATCH FOUND (exact qualifier match)")
                         return node
-                    elif len(context_stack) >= len(qualifiers):
-                        if context_stack[-len(qualifiers) :] == qualifiers:
+                    elif len(full_context) >= len(qualifiers):
+                        if full_context[-len(qualifiers) :] == qualifiers:
                             logger.info(f"{indent}  MATCH FOUND (suffix qualifier match)")
                             return node
 
                 # Recurse into the class/struct body with updated context
                 if class_name:
-                    new_context = context_stack + [class_name]
+                    new_context = full_context + [class_name]
                     for child in node.children:
                         if child.type == "field_declaration_list":
                             logger.debug(f"{indent}  Searching field_declaration_list...")
@@ -437,13 +460,34 @@ class SimpleCppParser:
             # Check for class/struct definitions
             elif node.type in ["class_specifier", "struct_specifier"]:
                 class_name = None
+                class_qualifiers = []
                 for child in node.children:
                     if child.type == "type_identifier":
                         class_name = node_text(child)
                         break
+                    elif child.type == "qualified_identifier":
+                        parts = []
+                        current_qi = child
+                        while current_qi and current_qi.type == "qualified_identifier":
+                            found_nested = False
+                            for qi_child in current_qi.children:
+                                if qi_child.type in ["namespace_identifier", "identifier"]:
+                                    parts.append(node_text(qi_child))
+                                elif qi_child.type == "type_identifier":
+                                    parts.append(node_text(qi_child))
+                                elif qi_child.type == "qualified_identifier":
+                                    current_qi = qi_child
+                                    found_nested = True
+                                    break
+                            if not found_nested:
+                                break
+                        if parts:
+                            class_name = parts[-1]
+                            class_qualifiers = parts[:-1]
+                        break
 
                 if class_name:
-                    new_context = context_stack + [class_name]
+                    new_context = context_stack + class_qualifiers + [class_name]
                     for child in node.children:
                         if child.type == "field_declaration_list":
                             for member in child.children:
@@ -603,10 +647,7 @@ class SimpleCppParser:
         # Compare stripping template args from both sides
         if len(found) >= len(target):
             found_tail = found[-len(target) :]
-            if all(
-                self._qualifier_base(f) == self._qualifier_base(t)
-                for f, t in zip(found_tail, target)
-            ):
+            if all(self._qualifier_base(f) == self._qualifier_base(t) for f, t in zip(found_tail, target)):
                 return True
         return False
 
@@ -710,9 +751,7 @@ class SimpleCppParser:
 
             if len(matching) > 1:
                 sigs = [self._extract_parameter_signature(n) for n in matching]
-                logger.warning(
-                    f"Multiple overloads of '{function_name}' match signature '{signature}': {sigs}"
-                )
+                logger.warning(f"Multiple overloads of '{function_name}' match signature '{signature}': {sigs}")
 
             nodes = matching
 
@@ -755,7 +794,6 @@ class SimpleCppParser:
         )
         return _node_to_result(node, name) if node else None
 
-
     def list_symbols(self, source_code: bytes) -> List[dict]:
         """
         List all extractable symbols in C++ source code.
@@ -794,10 +832,30 @@ class SimpleCppParser:
 
             if node.type in ["class_specifier", "struct_specifier", "enum_specifier"]:
                 type_name = None
+                type_qualifiers = []
                 has_body = False
                 for child in node.children:
                     if child.type == "type_identifier":
                         type_name = node_text(child)
+                    elif child.type == "qualified_identifier":
+                        parts = []
+                        current_qi = child
+                        while current_qi and current_qi.type == "qualified_identifier":
+                            found_nested = False
+                            for qi_child in current_qi.children:
+                                if qi_child.type in ["namespace_identifier", "identifier"]:
+                                    parts.append(node_text(qi_child))
+                                elif qi_child.type == "type_identifier":
+                                    parts.append(node_text(qi_child))
+                                elif qi_child.type == "qualified_identifier":
+                                    current_qi = qi_child
+                                    found_nested = True
+                                    break
+                            if not found_nested:
+                                break
+                        if parts:
+                            type_name = parts[-1]
+                            type_qualifiers = parts[:-1]
                     if child.type in ["field_declaration_list", "enumerator_list"]:
                         has_body = True
                 if type_name and has_body:
@@ -806,14 +864,16 @@ class SimpleCppParser:
                         "struct_specifier": "struct",
                         "enum_specifier": "enum",
                     }
-                    qualified = "::".join(context_stack + [type_name])
-                    symbols.append({
-                        "name": qualified,
-                        "kind": kind_map[node.type],
-                        "param": "struct",
-                        "line": node.start_point.row + 1,
-                    })
-                    new_context = context_stack + [type_name]
+                    qualified = "::".join(context_stack + type_qualifiers + [type_name])
+                    symbols.append(
+                        {
+                            "name": qualified,
+                            "kind": kind_map[node.type],
+                            "param": "struct",
+                            "line": node.start_point.row + 1,
+                        }
+                    )
+                    new_context = context_stack + type_qualifiers + [type_name]
                     for child in node.children:
                         if child.type == "field_declaration_list":
                             for member in child.children:
@@ -823,37 +883,42 @@ class SimpleCppParser:
             if node.type == "function_definition":
                 declarator = node.child_by_field_name("declarator")
                 if declarator:
-                    name, qualifiers = self._extract_function_name_and_qualifiers(
-                        declarator, context_stack
-                    )
+                    name, qualifiers = self._extract_function_name_and_qualifiers(declarator, context_stack)
                     if name:
                         qualified = "::".join(qualifiers + [name]) if qualifiers else name
                         sig = self._extract_parameter_signature(node)
-                        symbols.append({
-                            "name": qualified,
-                            "kind": "function",
-                            "param": "function",
-                            "line": node.start_point.row + 1,
-                            "signature": sig,
-                        })
+                        symbols.append(
+                            {
+                                "name": qualified,
+                                "kind": "function",
+                                "param": "function",
+                                "line": node.start_point.row + 1,
+                                "signature": sig,
+                            }
+                        )
                 return
 
             if node.type == "field_declaration":
                 declarator = node.child_by_field_name("declarator")
                 if declarator and declarator.type == "function_declarator":
-                    name, qualifiers = self._extract_function_name_and_qualifiers(
-                        declarator, context_stack
-                    )
+                    name, qualifiers = self._extract_function_name_and_qualifiers(declarator, context_stack)
                     if name:
                         qualified = "::".join(qualifiers + [name]) if qualifiers else name
                         sig = self._extract_parameter_signature(node)
-                        symbols.append({
-                            "name": qualified,
-                            "kind": "function",
-                            "param": "function",
-                            "line": node.start_point.row + 1,
-                            "signature": sig,
-                        })
+                        symbols.append(
+                            {
+                                "name": qualified,
+                                "kind": "function",
+                                "param": "function",
+                                "line": node.start_point.row + 1,
+                                "signature": sig,
+                            }
+                        )
+                    return
+                # field_declaration can also wrap nested class/struct definitions
+                for child in node.children:
+                    if child.type in ["class_specifier", "struct_specifier", "enum_specifier"]:
+                        collect(child, context_stack)
                 return
 
             if node.type == "template_declaration":
@@ -861,19 +926,19 @@ class SimpleCppParser:
                     if child.type == "function_definition":
                         declarator = child.child_by_field_name("declarator")
                         if declarator:
-                            name, qualifiers = self._extract_function_name_and_qualifiers(
-                                declarator, context_stack
-                            )
+                            name, qualifiers = self._extract_function_name_and_qualifiers(declarator, context_stack)
                             if name:
                                 qualified = "::".join(qualifiers + [name]) if qualifiers else name
                                 sig = self._extract_parameter_signature(node)
-                                symbols.append({
-                                    "name": qualified,
-                                    "kind": "function",
-                                    "param": "function",
-                                    "line": node.start_point.row + 1,
-                                    "signature": sig,
-                                })
+                                symbols.append(
+                                    {
+                                        "name": qualified,
+                                        "kind": "function",
+                                        "param": "function",
+                                        "line": node.start_point.row + 1,
+                                        "signature": sig,
+                                    }
+                                )
                         return
                     elif child.type in ["class_specifier", "struct_specifier"]:
                         collect(child, context_stack)
@@ -898,12 +963,14 @@ class SimpleCppParser:
                         break
                 if var_name:
                     qualified = "::".join(context_stack + [var_name]) if context_stack else var_name
-                    symbols.append({
-                        "name": qualified,
-                        "kind": "variable",
-                        "param": "var",
-                        "line": node.start_point.row + 1,
-                    })
+                    symbols.append(
+                        {
+                            "name": qualified,
+                            "kind": "variable",
+                            "param": "var",
+                            "line": node.start_point.row + 1,
+                        }
+                    )
 
             for child in node.children:
                 collect(child, context_stack)
