@@ -1,14 +1,14 @@
 <!--
 rendered_from: system-overview.md.j2
-rendered_at: 2026-03-19T12:14:57Z
+rendered_at: 2026-03-28T14:39:50Z
 branch: main
-commit: 6e395f0
-commit_message: test: add ref= integration tests against real repo history
+commit: 0271e56
+commit_message: feat: support extern function declaration extraction in C/C++
 -->
 
 ---
 
-<sub>Last updated: 2026-03-19 | branch: main | commit: 6e395f0 (test: add ref= integration tests against real repo history)</sub>
+<sub>Last updated: 2026-03-28 | branch: main | commit: 0271e56 (feat: support extern function declaration extraction in C/C++)</sub>
 
 ---
 
@@ -33,7 +33,7 @@ Before diving into how extraction works, let's look at the types that flow throu
 
 Every time code is extracted from a source file — whether a function, struct, or marker region — the result is packaged as an `ExtractionResult`. This dataclass carries the extracted text along with precise location metadata:
 
-📍 [`projected_source/languages/extraction_result.py:9-36`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/languages/extraction_result.py#L9-L36)
+📍 [`projected_source/languages/extraction_result.py:9-36`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/languages/extraction_result.py#L9-L36)
 ```python
    9 @dataclass
   10 class ExtractionResult:
@@ -71,7 +71,7 @@ The `to_tuple()` method exists for backwards compatibility — most of the extra
 
 When validating that documentation covers code changes, individual changed regions are represented as `ChangeRegion` — a simple dataclass tying a file path to a line range:
 
-📍 [`projected_source/core/changes_set.py:15-24`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/changes_set.py#L15-L24)
+📍 [`projected_source/core/changes_set.py:15-24`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/changes_set.py#L15-L24)
 ```python
   15 @dataclass
   16 class ChangeRegion:
@@ -91,64 +91,65 @@ When validating that documentation covers code changes, individual changed regio
 
 The system supports multiple languages through a simple registry pattern. Each file extension maps to an extractor class:
 
-📍 [`projected_source/languages/__init__.py:16-35`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/languages/__init__.py#L16-L35)
+📍 [`projected_source/languages/__init__.py:17-37`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/languages/__init__.py#L17-L37)
 ```python
-  16 EXTRACTORS = {
-  17     ".cpp": CppExtractor,
-  18     ".cc": CppExtractor,
-  19     ".cxx": CppExtractor,
-  20     ".c++": CppExtractor,
-  21     ".hpp": CppExtractor,
-  22     ".h": CppExtractor,
-  23     ".hxx": CppExtractor,
-  24     ".h++": CppExtractor,
-  25     ".c": CppExtractor,  # C is close enough to C++ for our purposes
-  26     ".ipp": CppExtractor,  # Inline implementation files
-  27     ".macro": CppExtractor,  # C preprocessor macro files (e.g., rippled sfields.macro)
-  28     ".proto": ProtoExtractor,  # Protocol Buffers
-  29     ".py": PythonExtractor,  # Python
-  30     ".pyi": PythonExtractor,  # Python type stubs
-  31     ".ts": TypeScriptExtractor,  # TypeScript
-  32     ".tsx": TypeScriptExtractor,  # TSX (React) — tsx=True set via get_extractor
-  33     ".mts": TypeScriptExtractor,  # TypeScript ES module
-  34     ".cts": TypeScriptExtractor,  # TypeScript CommonJS module
-  35 }
+  17 EXTRACTORS = {
+  18     ".cpp": CppExtractor,
+  19     ".cc": CppExtractor,
+  20     ".cxx": CppExtractor,
+  21     ".c++": CppExtractor,
+  22     ".hpp": CppExtractor,
+  23     ".h": CppExtractor,
+  24     ".hxx": CppExtractor,
+  25     ".h++": CppExtractor,
+  26     ".c": CppExtractor,  # C is close enough to C++ for our purposes
+  27     ".ipp": CppExtractor,  # Inline implementation files
+  28     ".macro": CppExtractor,  # C preprocessor macro files (e.g., rippled sfields.macro)
+  29     ".proto": ProtoExtractor,  # Protocol Buffers
+  30     ".py": PythonExtractor,  # Python
+  31     ".pyi": PythonExtractor,  # Python type stubs
+  32     ".ts": TypeScriptExtractor,  # TypeScript
+  33     ".tsx": TypeScriptExtractor,  # TSX (React) — tsx=True set via get_extractor
+  34     ".mts": TypeScriptExtractor,  # TypeScript ES module
+  35     ".cts": TypeScriptExtractor,  # TypeScript CommonJS module
+  36     ".java": JavaExtractor,  # Java
+  37 }
 ```
 
 When a `code()` call needs to extract from a file, it calls `get_extractor()` which looks up the right class by file extension and instantiates it:
 
-📍 [`projected_source/languages/__init__.py:38-60`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/languages/__init__.py#L38-L60)
+📍 [`projected_source/languages/__init__.py:40-62`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/languages/__init__.py#L40-L62)
 ```python
-  38 def get_extractor(file_path: Path):
-  39     """
-  40     Get the appropriate extractor for a file based on its extension.
-  41 
-  42     Args:
-  43         file_path: Path to the file
-  44 
-  45     Returns:
-  46         An extractor instance
-  47 
-  48     Raises:
-  49         ValueError: If no extractor is available for the file type
-  50     """
-  51     suffix = file_path.suffix.lower()
-  52 
-  53     if suffix not in EXTRACTORS:
-  54         supported = ", ".join(EXTRACTORS.keys())
-  55         raise ValueError(f"No extractor for {suffix} files. Supported: {supported}")
-  56 
-  57     extractor_class = EXTRACTORS[suffix]
-  58     if extractor_class is TypeScriptExtractor and suffix == ".tsx":
-  59         return extractor_class(tsx=True)
-  60     return extractor_class()
+  40 def get_extractor(file_path: Path):
+  41     """
+  42     Get the appropriate extractor for a file based on its extension.
+  43 
+  44     Args:
+  45         file_path: Path to the file
+  46 
+  47     Returns:
+  48         An extractor instance
+  49 
+  50     Raises:
+  51         ValueError: If no extractor is available for the file type
+  52     """
+  53     suffix = file_path.suffix.lower()
+  54 
+  55     if suffix not in EXTRACTORS:
+  56         supported = ", ".join(EXTRACTORS.keys())
+  57         raise ValueError(f"No extractor for {suffix} files. Supported: {supported}")
+  58 
+  59     extractor_class = EXTRACTORS[suffix]
+  60     if extractor_class is TypeScriptExtractor and suffix == ".tsx":
+  61         return extractor_class(tsx=True)
+  62     return extractor_class()
 ```
 
 ### BaseExtractor
 
 All language extractors inherit from `BaseExtractor`, which provides the tree-sitter parser setup, line extraction, and the marker system. The marker system lets you tag regions of source code with `//@@start name` and `//@@end name` comments, then extract just that region:
 
-📍 [`projected_source/core/extractor.py:17-134`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/extractor.py#L17-L134)
+📍 [`projected_source/core/extractor.py:17-134`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/extractor.py#L17-L134)
 ```python
   17 class BaseExtractor:
   18     """Base class for language-specific extractors."""
@@ -284,7 +285,7 @@ The `TemplateRenderer` is the heart of the system. It creates a Jinja2 environme
 
 When a renderer is created, it sets up the Jinja2 environment with the template directory as the loader root, and registers the extraction functions as globals:
 
-📍 [`projected_source/core/renderer.py:74-114`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/renderer.py#L74-L114)
+📍 [`projected_source/core/renderer.py:74-114`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/renderer.py#L74-L114)
 ```python
   74     def __init__(
   75         self,
@@ -333,7 +334,7 @@ When a renderer is created, it sets up the Jinja2 environment with the template 
 
 This is the workhorse. Every `{{ code('file.cpp', function='foo') }}` call in a template invokes `_code_function`. It resolves the file path, picks the right extractor, extracts the requested symbol, optionally generates a GitHub permalink, adds line numbers, and returns formatted markdown:
 
-📍 [`projected_source/core/renderer.py:119-394`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/renderer.py#L119-L394)
+📍 [`projected_source/core/renderer.py:119-395`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/renderer.py#L119-L395)
 ```python
  119     def _code_function(
  120         self,
@@ -354,263 +355,264 @@ This is the workhorse. Every `{{ code('file.cpp', function='foo') }}` call in a 
  135         line_numbers: bool = True,
  136         language: str = None,
  137         ref: str = None,
- 138     ) -> str:
- 139         """
- 140         Universal code extraction function for templates.
- 141 
- 142         Args:
- 143             file_path: Path to the source file
- 144             function: Function name to extract
- 145             struct: Struct/class/enum name to extract (C/C++)
- 146             var: Variable/constant declaration to extract (C/C++)
- 147             function_macro: Macro that defines a function (dict with 'name' and optional 'arg0', 'arg1', etc)
- 148             macro_definition: Macro definition name to extract (#define statement)
- 149             lines: Tuple of (start_line, end_line) to extract
- 150             marker: Marker name to extract between //@@start and //@@end
- 151             signature: String to match against parameter types for overload disambiguation.
- 152                        Use partial type names like "TMProposeSet" to select a specific overload.
- 153             message: Message name to extract (protobuf)
- 154             enum: Enum name to extract (protobuf)
- 155             service: Service name to extract (protobuf)
- 156             github: Include GitHub permalink (default: True)
- 157             blame: Include git blame info (default: False)
- 158             line_numbers: Show line numbers (default: True)
- 159             language: Language for syntax highlighting (auto-detected if None)
- 160 
- 161         Returns:
- 162             Formatted markdown with code block
- 163 
- 164         Examples in templates:
- 165             {{ code('src/file.cpp', function='myFunc') }}
- 166             {{ code('src/file.cpp', function='onMessage', signature='TMProposeSet') }}
- 167             {{ code('src/file.cpp', struct='MyClass') }}
- 168             {{ code('src/file.cpp', var='errorInfos') }}
- 169             {{ code('src/file.cpp', lines=(10, 20)) }}
- 170             {{ code('src/file.cpp', marker='example1') }}
- 171             {{ code('src/proto/file.proto', message='MyMessage') }}
- 172             {{ code('src/proto/file.proto', enum='MyEnum') }}
- 173         """
- 174         tmp_file = None
- 175         try:
- 176             # Apply code_root prefix if set (via {% code_context %} block)
- 177             code_root = str(self.env.globals.get("code_root", ""))
- 178             if code_root and not Path(file_path).is_absolute():
- 179                 file_path = str(Path(code_root) / file_path)
- 180 
- 181             # Determine active ref (per-call overrides context)
- 182             active_ref = ref or str(self.env.globals.get("code_ref", ""))
- 183 
- 184             # Resolve file path relative to repo
- 185             resolved_path = Path(file_path)
- 186             if not resolved_path.is_absolute():
- 187                 resolved_path = self.repo_path / resolved_path
- 188 
- 189             # If a git ref is active, fetch file content from that ref
- 190             if active_ref:
- 191                 rel_path = file_path
- 192                 # Ensure relative path for git show
- 193                 try:
- 194                     rel_path = str(Path(file_path).relative_to(self.repo_path))
- 195                 except ValueError:
- 196                     # Already relative
- 197                     rel_path = file_path
- 198                 content = subprocess.check_output(
- 199                     ["git", "show", f"{active_ref}:{rel_path}"],
- 200                     cwd=self.repo_path,
- 201                     stderr=subprocess.DEVNULL,
- 202                 )
- 203                 tmp_file = Path(tempfile.mktemp(suffix=resolved_path.suffix))
- 204                 tmp_file.write_bytes(content)
- 205                 resolved_path = tmp_file
- 206 
- 207             # Get the appropriate extractor
- 208             extractor = get_extractor(resolved_path)
- 209 
- 210             # Extract code based on parameters
- 211             if function:
- 212                 # Check if we also have a marker - extract marker within function
- 213                 if marker:
- 214                     if hasattr(extractor, "extract_function_marker"):
- 215                         code_text, start_line, end_line = extractor.extract_function_marker(
- 216                             resolved_path, function, marker
- 217                         )
- 218                         logger.info(f"Extracted marker '{marker}' from function '{function}' in {file_path}")
- 219                     else:
- 220                         return "❌ **ERROR**: Function marker extraction not supported for this file type"
- 221                 else:
- 222                     code_text, start_line, end_line = extractor.extract_function(resolved_path, function, signature)
- 223                     logger.info(f"Extracted function '{function}' from {file_path}")
- 224             elif function_macro:
- 225                 # Handle function_macro parameter
- 226                 if isinstance(function_macro, str):
- 227                     # Simple string -> convert to dict
- 228                     macro_spec = {"name": function_macro}
- 229                 else:
- 230                     macro_spec = function_macro
- 231 
- 232                 # Check if we also have a marker - extract marker within macro
- 233                 if marker:
- 234                     code_text, start_line, end_line = extractor.extract_function_macro_marker(
- 235                         resolved_path, macro_spec, marker
- 236                     )
- 237                     logger.info(f"Extracted marker '{marker}' from function_macro '{macro_spec}' in {file_path}")
- 238                 else:
- 239                     code_text, start_line, end_line = extractor.extract_function_macro(resolved_path, macro_spec)
- 240                     logger.info(f"Extracted function_macro '{macro_spec}' from {file_path}")
- 241             elif macro_definition:
- 242                 code_text, start_line, end_line = extractor.extract_macro_definition(resolved_path, macro_definition)
- 243                 logger.info(f"Extracted macro_definition '{macro_definition}' from {file_path}")
- 244             elif var:
- 245                 # Extract variable/constant declaration
- 246                 if hasattr(extractor, "extract_variable"):
- 247                     code_text, start_line, end_line = extractor.extract_variable(resolved_path, var)
- 248                     logger.info(f"Extracted variable '{var}' from {file_path}")
- 249                 elif hasattr(extractor, "extract_struct"):
- 250                     # C/C++ uses extract_struct for var= (finds declarations)
- 251                     if marker:
- 252                         if hasattr(extractor, "extract_struct_marker"):
- 253                             code_text, start_line, end_line = extractor.extract_struct_marker(
- 254                                 resolved_path, var, marker
- 255                             )
- 256                             logger.info(f"Extracted marker '{marker}' from variable '{var}' in {file_path}")
- 257                         else:
- 258                             return "❌ **ERROR**: Marker extraction in variable not supported"
- 259                     else:
- 260                         code_text, start_line, end_line = extractor.extract_struct(resolved_path, var)
- 261                         logger.info(f"Extracted variable '{var}' from {file_path}")
- 262                 else:
- 263                     return "❌ **ERROR**: Variable extraction not supported for this file type"
- 264             elif struct:
- 265                 # Extract struct/class/enum definition
- 266                 if hasattr(extractor, "extract_struct"):
- 267                     if marker:
- 268                         if hasattr(extractor, "extract_struct_marker"):
- 269                             code_text, start_line, end_line = extractor.extract_struct_marker(
- 270                                 resolved_path, struct, marker
- 271                             )
- 272                             logger.info(f"Extracted marker '{marker}' from struct '{struct}' in {file_path}")
- 273                         else:
- 274                             return "❌ **ERROR**: Marker extraction in struct not supported"
- 275                     else:
- 276                         code_text, start_line, end_line = extractor.extract_struct(resolved_path, struct)
- 277                         logger.info(f"Extracted struct/class '{struct}' from {file_path}")
- 278                 else:
- 279                     return "❌ **ERROR**: Struct/class extraction not supported for this file type"
- 280             elif message:
- 281                 # Extract protobuf message
- 282                 if hasattr(extractor, "extract_message"):
- 283                     if marker:
- 284                         code_text, start_line, end_line = extractor.extract_message_marker(
- 285                             resolved_path, message, marker
- 286                         )
- 287                         logger.info(f"Extracted marker '{marker}' from message '{message}' in {file_path}")
- 288                     else:
- 289                         code_text, start_line, end_line = extractor.extract_message(resolved_path, message)
- 290                         logger.info(f"Extracted message '{message}' from {file_path}")
- 291                 else:
- 292                     return "❌ **ERROR**: Message extraction not supported for this file type"
- 293             elif enum:
- 294                 # Extract protobuf enum
- 295                 if hasattr(extractor, "extract_enum"):
- 296                     code_text, start_line, end_line = extractor.extract_enum(resolved_path, enum)
- 297                     logger.info(f"Extracted enum '{enum}' from {file_path}")
- 298                 else:
- 299                     return "❌ **ERROR**: Enum extraction not supported for this file type"
- 300             elif service:
- 301                 # Extract protobuf service
- 302                 if hasattr(extractor, "extract_service"):
- 303                     code_text, start_line, end_line = extractor.extract_service(resolved_path, service)
- 304                     logger.info(f"Extracted service '{service}' from {file_path}")
- 305                 else:
- 306                     return "❌ **ERROR**: Service extraction not supported for this file type"
- 307             elif marker:
- 308                 code_text, start_line, end_line = extractor.extract_marker(resolved_path, marker)
- 309                 logger.info(f"Extracted marker '{marker}' from {file_path}")
- 310             elif lines:
- 311                 start_line, end_line = lines
- 312                 code_text, start_line, end_line = extractor.extract_lines(resolved_path, start_line, end_line)
- 313                 logger.info(f"Extracted lines {start_line}-{end_line} from {file_path}")
- 314             else:
- 315                 return (
- 316                     f"❌ **ERROR**: Must specify function, struct, var, function_macro, "
- 317                     f"macro_definition, lines, or marker for {file_path}"
- 318                 )
- 319 
- 320             # Use original file path for display (not temp file)
- 321             display_path = self.repo_path / file_path if not Path(file_path).is_absolute() else Path(file_path)
- 322 
- 323             # Track this region as covered if we have a ChangesSet
- 324             if self.changes_set is not None and not active_ref:
- 325                 self.changes_set.subtract(display_path, start_line, end_line)
- 326 
- 327             # Remap line numbers if requested (for sharing docs from dirty files)
- 328             display_start = start_line
- 329             display_end = end_line
- 330             if self.remap_dirty_lines and not active_ref:
- 331                 display_start = self.github.map_to_committed_line(display_path, start_line)
- 332                 display_end = self.github.map_to_committed_line(display_path, end_line)
- 333 
- 334             # Build header with GitHub permalink if requested
- 335             if github and not active_ref:
- 336                 header = self.github.get_permalink(
- 337                     display_path, start_line, end_line, display_committed_lines=self.remap_dirty_lines
- 338                 )
- 339             else:
- 340                 display_rel = display_path.relative_to(self.repo_path) if display_path.is_absolute() else display_path
- 341                 ref_suffix = f" @ {active_ref}" if active_ref else ""
- 342                 if display_start == display_end:
- 343                     header = f"📍 `{display_rel}:{display_start}{ref_suffix}`"
- 344                 else:
- 345                     header = f"📍 `{display_rel}:{display_start}-{display_end}{ref_suffix}`"
- 346 
- 347             # Format code with line numbers and/or blame
- 348             # Use remapped line numbers for display if remap_dirty_lines is enabled
- 349             code_start_line = display_start if self.remap_dirty_lines else start_line
- 350             if blame and not active_ref:
- 351                 code_text = self.github.format_with_blame(code_text, code_start_line, display_path)
- 352             elif line_numbers:
- 353                 code_text = self._add_line_numbers(code_text, code_start_line)
- 354 
- 355             # Auto-detect language if not specified
- 356             if not language:
- 357                 suffix = display_path.suffix.lower()
- 358                 language_map = {
- 359                     ".cpp": "cpp",
- 360                     ".cc": "cpp",
- 361                     ".cxx": "cpp",
- 362                     ".hpp": "cpp",
- 363                     ".h": "cpp",
- 364                     ".hxx": "cpp",
- 365                     ".ipp": "cpp",  # Inline implementation files
- 366                     ".macro": "cpp",  # C preprocessor macro files
- 367                     ".c": "c",
- 368                     ".py": "python",
- 369                     ".js": "javascript",
- 370                     ".ts": "typescript",
- 371                     ".tsx": "tsx",
- 372                     ".mts": "typescript",
- 373                     ".cts": "typescript",
- 374                     ".java": "java",
- 375                     ".rs": "rust",
- 376                     ".go": "go",
- 377                     ".proto": "protobuf",
- 378                 }
- 379                 language = language_map.get(suffix, "text")
- 380 
- 381             # Build final output
- 382             return f"{header}\n```{language}\n{code_text}\n```"
- 383 
- 384         except Exception as e:
- 385             error_msg = f"❌ **ERROR**: {e}"
- 386             logger.error(f"Code extraction failed: {e}")
- 387             # Collect file as fixture if collection is enabled
- 388             _collect_error_fixture(resolved_path, str(e))
- 389             return error_msg
- 390 
- 391         finally:
- 392             # Clean up temp file if we created one
- 393             if tmp_file and tmp_file.exists():
- 394                 tmp_file.unlink()
+ 138         root: str = None,
+ 139     ) -> str:
+ 140         """
+ 141         Universal code extraction function for templates.
+ 142 
+ 143         Args:
+ 144             file_path: Path to the source file
+ 145             function: Function name to extract
+ 146             struct: Struct/class/enum name to extract (C/C++)
+ 147             var: Variable/constant declaration to extract (C/C++)
+ 148             function_macro: Macro that defines a function (dict with 'name' and optional 'arg0', 'arg1', etc)
+ 149             macro_definition: Macro definition name to extract (#define statement)
+ 150             lines: Tuple of (start_line, end_line) to extract
+ 151             marker: Marker name to extract between //@@start and //@@end
+ 152             signature: String to match against parameter types for overload disambiguation.
+ 153                        Use partial type names like "TMProposeSet" to select a specific overload.
+ 154             message: Message name to extract (protobuf)
+ 155             enum: Enum name to extract (protobuf)
+ 156             service: Service name to extract (protobuf)
+ 157             github: Include GitHub permalink (default: True)
+ 158             blame: Include git blame info (default: False)
+ 159             line_numbers: Show line numbers (default: True)
+ 160             language: Language for syntax highlighting (auto-detected if None)
+ 161 
+ 162         Returns:
+ 163             Formatted markdown with code block
+ 164 
+ 165         Examples in templates:
+ 166             {{ code('src/file.cpp', function='myFunc') }}
+ 167             {{ code('src/file.cpp', function='onMessage', signature='TMProposeSet') }}
+ 168             {{ code('src/file.cpp', struct='MyClass') }}
+ 169             {{ code('src/file.cpp', var='errorInfos') }}
+ 170             {{ code('src/file.cpp', lines=(10, 20)) }}
+ 171             {{ code('src/file.cpp', marker='example1') }}
+ 172             {{ code('src/proto/file.proto', message='MyMessage') }}
+ 173             {{ code('src/proto/file.proto', enum='MyEnum') }}
+ 174         """
+ 175         tmp_file = None
+ 176         try:
+ 177             # Apply root prefix: per-call root= overrides context code_root
+ 178             code_root = root or str(self.env.globals.get("code_root", ""))
+ 179             if code_root and not Path(file_path).is_absolute():
+ 180                 file_path = str(Path(code_root) / file_path)
+ 181 
+ 182             # Determine active ref (per-call overrides context)
+ 183             active_ref = ref or str(self.env.globals.get("code_ref", ""))
+ 184 
+ 185             # Resolve file path relative to repo
+ 186             resolved_path = Path(file_path)
+ 187             if not resolved_path.is_absolute():
+ 188                 resolved_path = self.repo_path / resolved_path
+ 189 
+ 190             # If a git ref is active, fetch file content from that ref
+ 191             if active_ref:
+ 192                 rel_path = file_path
+ 193                 # Ensure relative path for git show
+ 194                 try:
+ 195                     rel_path = str(Path(file_path).relative_to(self.repo_path))
+ 196                 except ValueError:
+ 197                     # Already relative
+ 198                     rel_path = file_path
+ 199                 content = subprocess.check_output(
+ 200                     ["git", "show", f"{active_ref}:{rel_path}"],
+ 201                     cwd=self.repo_path,
+ 202                     stderr=subprocess.DEVNULL,
+ 203                 )
+ 204                 tmp_file = Path(tempfile.mktemp(suffix=resolved_path.suffix))
+ 205                 tmp_file.write_bytes(content)
+ 206                 resolved_path = tmp_file
+ 207 
+ 208             # Get the appropriate extractor
+ 209             extractor = get_extractor(resolved_path)
+ 210 
+ 211             # Extract code based on parameters
+ 212             if function:
+ 213                 # Check if we also have a marker - extract marker within function
+ 214                 if marker:
+ 215                     if hasattr(extractor, "extract_function_marker"):
+ 216                         code_text, start_line, end_line = extractor.extract_function_marker(
+ 217                             resolved_path, function, marker
+ 218                         )
+ 219                         logger.info(f"Extracted marker '{marker}' from function '{function}' in {file_path}")
+ 220                     else:
+ 221                         return "❌ **ERROR**: Function marker extraction not supported for this file type"
+ 222                 else:
+ 223                     code_text, start_line, end_line = extractor.extract_function(resolved_path, function, signature)
+ 224                     logger.info(f"Extracted function '{function}' from {file_path}")
+ 225             elif function_macro:
+ 226                 # Handle function_macro parameter
+ 227                 if isinstance(function_macro, str):
+ 228                     # Simple string -> convert to dict
+ 229                     macro_spec = {"name": function_macro}
+ 230                 else:
+ 231                     macro_spec = function_macro
+ 232 
+ 233                 # Check if we also have a marker - extract marker within macro
+ 234                 if marker:
+ 235                     code_text, start_line, end_line = extractor.extract_function_macro_marker(
+ 236                         resolved_path, macro_spec, marker
+ 237                     )
+ 238                     logger.info(f"Extracted marker '{marker}' from function_macro '{macro_spec}' in {file_path}")
+ 239                 else:
+ 240                     code_text, start_line, end_line = extractor.extract_function_macro(resolved_path, macro_spec)
+ 241                     logger.info(f"Extracted function_macro '{macro_spec}' from {file_path}")
+ 242             elif macro_definition:
+ 243                 code_text, start_line, end_line = extractor.extract_macro_definition(resolved_path, macro_definition)
+ 244                 logger.info(f"Extracted macro_definition '{macro_definition}' from {file_path}")
+ 245             elif var:
+ 246                 # Extract variable/constant declaration
+ 247                 if hasattr(extractor, "extract_variable"):
+ 248                     code_text, start_line, end_line = extractor.extract_variable(resolved_path, var)
+ 249                     logger.info(f"Extracted variable '{var}' from {file_path}")
+ 250                 elif hasattr(extractor, "extract_struct"):
+ 251                     # C/C++ uses extract_struct for var= (finds declarations)
+ 252                     if marker:
+ 253                         if hasattr(extractor, "extract_struct_marker"):
+ 254                             code_text, start_line, end_line = extractor.extract_struct_marker(
+ 255                                 resolved_path, var, marker
+ 256                             )
+ 257                             logger.info(f"Extracted marker '{marker}' from variable '{var}' in {file_path}")
+ 258                         else:
+ 259                             return "❌ **ERROR**: Marker extraction in variable not supported"
+ 260                     else:
+ 261                         code_text, start_line, end_line = extractor.extract_struct(resolved_path, var)
+ 262                         logger.info(f"Extracted variable '{var}' from {file_path}")
+ 263                 else:
+ 264                     return "❌ **ERROR**: Variable extraction not supported for this file type"
+ 265             elif struct:
+ 266                 # Extract struct/class/enum definition
+ 267                 if hasattr(extractor, "extract_struct"):
+ 268                     if marker:
+ 269                         if hasattr(extractor, "extract_struct_marker"):
+ 270                             code_text, start_line, end_line = extractor.extract_struct_marker(
+ 271                                 resolved_path, struct, marker
+ 272                             )
+ 273                             logger.info(f"Extracted marker '{marker}' from struct '{struct}' in {file_path}")
+ 274                         else:
+ 275                             return "❌ **ERROR**: Marker extraction in struct not supported"
+ 276                     else:
+ 277                         code_text, start_line, end_line = extractor.extract_struct(resolved_path, struct)
+ 278                         logger.info(f"Extracted struct/class '{struct}' from {file_path}")
+ 279                 else:
+ 280                     return "❌ **ERROR**: Struct/class extraction not supported for this file type"
+ 281             elif message:
+ 282                 # Extract protobuf message
+ 283                 if hasattr(extractor, "extract_message"):
+ 284                     if marker:
+ 285                         code_text, start_line, end_line = extractor.extract_message_marker(
+ 286                             resolved_path, message, marker
+ 287                         )
+ 288                         logger.info(f"Extracted marker '{marker}' from message '{message}' in {file_path}")
+ 289                     else:
+ 290                         code_text, start_line, end_line = extractor.extract_message(resolved_path, message)
+ 291                         logger.info(f"Extracted message '{message}' from {file_path}")
+ 292                 else:
+ 293                     return "❌ **ERROR**: Message extraction not supported for this file type"
+ 294             elif enum:
+ 295                 # Extract protobuf enum
+ 296                 if hasattr(extractor, "extract_enum"):
+ 297                     code_text, start_line, end_line = extractor.extract_enum(resolved_path, enum)
+ 298                     logger.info(f"Extracted enum '{enum}' from {file_path}")
+ 299                 else:
+ 300                     return "❌ **ERROR**: Enum extraction not supported for this file type"
+ 301             elif service:
+ 302                 # Extract protobuf service
+ 303                 if hasattr(extractor, "extract_service"):
+ 304                     code_text, start_line, end_line = extractor.extract_service(resolved_path, service)
+ 305                     logger.info(f"Extracted service '{service}' from {file_path}")
+ 306                 else:
+ 307                     return "❌ **ERROR**: Service extraction not supported for this file type"
+ 308             elif marker:
+ 309                 code_text, start_line, end_line = extractor.extract_marker(resolved_path, marker)
+ 310                 logger.info(f"Extracted marker '{marker}' from {file_path}")
+ 311             elif lines:
+ 312                 start_line, end_line = lines
+ 313                 code_text, start_line, end_line = extractor.extract_lines(resolved_path, start_line, end_line)
+ 314                 logger.info(f"Extracted lines {start_line}-{end_line} from {file_path}")
+ 315             else:
+ 316                 return (
+ 317                     f"❌ **ERROR**: Must specify function, struct, var, function_macro, "
+ 318                     f"macro_definition, lines, or marker for {file_path}"
+ 319                 )
+ 320 
+ 321             # Use original file path for display (not temp file)
+ 322             display_path = self.repo_path / file_path if not Path(file_path).is_absolute() else Path(file_path)
+ 323 
+ 324             # Track this region as covered if we have a ChangesSet
+ 325             if self.changes_set is not None and not active_ref:
+ 326                 self.changes_set.subtract(display_path, start_line, end_line)
+ 327 
+ 328             # Remap line numbers if requested (for sharing docs from dirty files)
+ 329             display_start = start_line
+ 330             display_end = end_line
+ 331             if self.remap_dirty_lines and not active_ref:
+ 332                 display_start = self.github.map_to_committed_line(display_path, start_line)
+ 333                 display_end = self.github.map_to_committed_line(display_path, end_line)
+ 334 
+ 335             # Build header with GitHub permalink if requested
+ 336             if github and not active_ref:
+ 337                 header = self.github.get_permalink(
+ 338                     display_path, start_line, end_line, display_committed_lines=self.remap_dirty_lines
+ 339                 )
+ 340             else:
+ 341                 display_rel = display_path.relative_to(self.repo_path) if display_path.is_absolute() else display_path
+ 342                 ref_suffix = f" @ {active_ref}" if active_ref else ""
+ 343                 if display_start == display_end:
+ 344                     header = f"📍 `{display_rel}:{display_start}{ref_suffix}`"
+ 345                 else:
+ 346                     header = f"📍 `{display_rel}:{display_start}-{display_end}{ref_suffix}`"
+ 347 
+ 348             # Format code with line numbers and/or blame
+ 349             # Use remapped line numbers for display if remap_dirty_lines is enabled
+ 350             code_start_line = display_start if self.remap_dirty_lines else start_line
+ 351             if blame and not active_ref:
+ 352                 code_text = self.github.format_with_blame(code_text, code_start_line, display_path)
+ 353             elif line_numbers:
+ 354                 code_text = self._add_line_numbers(code_text, code_start_line)
+ 355 
+ 356             # Auto-detect language if not specified
+ 357             if not language:
+ 358                 suffix = display_path.suffix.lower()
+ 359                 language_map = {
+ 360                     ".cpp": "cpp",
+ 361                     ".cc": "cpp",
+ 362                     ".cxx": "cpp",
+ 363                     ".hpp": "cpp",
+ 364                     ".h": "cpp",
+ 365                     ".hxx": "cpp",
+ 366                     ".ipp": "cpp",  # Inline implementation files
+ 367                     ".macro": "cpp",  # C preprocessor macro files
+ 368                     ".c": "c",
+ 369                     ".py": "python",
+ 370                     ".js": "javascript",
+ 371                     ".ts": "typescript",
+ 372                     ".tsx": "tsx",
+ 373                     ".mts": "typescript",
+ 374                     ".cts": "typescript",
+ 375                     ".java": "java",
+ 376                     ".rs": "rust",
+ 377                     ".go": "go",
+ 378                     ".proto": "protobuf",
+ 379                 }
+ 380                 language = language_map.get(suffix, "text")
+ 381 
+ 382             # Build final output
+ 383             return f"{header}\n```{language}\n{code_text}\n```"
+ 384 
+ 385         except Exception as e:
+ 386             error_msg = f"❌ **ERROR**: {e}"
+ 387             logger.error(f"Code extraction failed: {e}")
+ 388             # Collect file as fixture if collection is enabled
+ 389             _collect_error_fixture(resolved_path, str(e))
+ 390             return error_msg
+ 391 
+ 392         finally:
+ 393             # Clean up temp file if we created one
+ 394             if tmp_file and tmp_file.exists():
+ 395                 tmp_file.unlink()
 ```
 
 The function handles a wide variety of extraction types — functions, structs, variables, macros, protobuf messages, enums, services, markers, and raw line ranges. It also supports nesting: you can extract a marker *within* a function by passing both `function=` and `marker=`.
@@ -621,101 +623,101 @@ When a `ChangesSet` is provided (validation mode), each extraction automatically
 
 Templates can compose by including other files. Plain markdown files are included verbatim; `.j2` files are rendered as templates with full access to `code()` and other functions:
 
-📍 [`projected_source/core/renderer.py:490-513`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/renderer.py#L490-L513)
+📍 [`projected_source/core/renderer.py:491-514`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/renderer.py#L491-L514)
 ```python
- 490     def _include_function(self, path: str) -> str:
- 491         """
- 492         Include a file into the template output.
- 493 
- 494         .j2 files are rendered as Jinja2 templates (with access to code() etc).
- 495         All other files are included as raw text.
- 496 
- 497         Args:
- 498             path: Path relative to the template directory
- 499 
- 500         Returns:
- 501             File contents (rendered if .j2)
- 502 
- 503         Examples:
- 504             {{ include('background.md') }}
- 505             {{ include('details.md.j2') }}
- 506             {{ include('sections/intro.md') }}
- 507         """
- 508         if path.endswith(".j2"):
- 509             template = self.env.get_template(path)
- 510             return template.render()
- 511         else:
- 512             full_path = self.template_dir / path
- 513             return full_path.read_text()
+ 491     def _include_function(self, path: str) -> str:
+ 492         """
+ 493         Include a file into the template output.
+ 494 
+ 495         .j2 files are rendered as Jinja2 templates (with access to code() etc).
+ 496         All other files are included as raw text.
+ 497 
+ 498         Args:
+ 499             path: Path relative to the template directory
+ 500 
+ 501         Returns:
+ 502             File contents (rendered if .j2)
+ 503 
+ 504         Examples:
+ 505             {{ include('background.md') }}
+ 506             {{ include('details.md.j2') }}
+ 507             {{ include('sections/intro.md') }}
+ 508         """
+ 509         if path.endswith(".j2"):
+ 510             template = self.env.get_template(path)
+ 511             return template.render()
+ 512         else:
+ 513             full_path = self.template_dir / path
+ 514             return full_path.read_text()
 ```
 
 ### Custom Tags
 
 Projects can extend the template environment by placing a `.projected-source.py` file in the project. The renderer discovers it by walking up from the template directory to the git root:
 
-📍 [`projected_source/core/renderer.py:548-576`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/renderer.py#L548-L576)
+📍 [`projected_source/core/renderer.py:549-577`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/renderer.py#L549-L577)
 ```python
- 548     def _find_custom_tags_file(self, start_path: Path) -> Optional[Path]:
- 549         """
- 550         Find .projected-source.py file by walking up from start_path.
- 551         Stops at git root to avoid escaping the repository.
- 552 
- 553         Args:
- 554             start_path: Path to start searching from (usually template dir)
- 555 
- 556         Returns:
- 557             Path to .projected-source.py if found, None otherwise
- 558         """
- 559         current = start_path.resolve()
- 560 
- 561         # Use repo_path as the boundary (it's already the git root)
- 562         git_root = self.repo_path
- 563 
- 564         while current >= git_root:
- 565             custom_file = current / ".projected-source.py"
- 566             if custom_file.exists():
- 567                 logger.info(f"Found custom tags file at {custom_file}")
- 568                 return custom_file
- 569 
- 570             # Move up one directory
- 571             parent = current.parent
- 572             if parent == current:  # Reached filesystem root
- 573                 break
- 574             current = parent
- 575 
- 576         return None
+ 549     def _find_custom_tags_file(self, start_path: Path) -> Optional[Path]:
+ 550         """
+ 551         Find .projected-source.py file by walking up from start_path.
+ 552         Stops at git root to avoid escaping the repository.
+ 553 
+ 554         Args:
+ 555             start_path: Path to start searching from (usually template dir)
+ 556 
+ 557         Returns:
+ 558             Path to .projected-source.py if found, None otherwise
+ 559         """
+ 560         current = start_path.resolve()
+ 561 
+ 562         # Use repo_path as the boundary (it's already the git root)
+ 563         git_root = self.repo_path
+ 564 
+ 565         while current >= git_root:
+ 566             custom_file = current / ".projected-source.py"
+ 567             if custom_file.exists():
+ 568                 logger.info(f"Found custom tags file at {custom_file}")
+ 569                 return custom_file
+ 570 
+ 571             # Move up one directory
+ 572             parent = current.parent
+ 573             if parent == current:  # Reached filesystem root
+ 574                 break
+ 575             current = parent
+ 576 
+ 577         return None
 ```
 
 ### Rendering
 
 The public API is straightforward — `render_template()` for named templates and `render_template_file()` for file paths:
 
-📍 [`projected_source/core/renderer.py:626-649`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/renderer.py#L626-L649)
+📍 [`projected_source/core/renderer.py:627-650`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/renderer.py#L627-L650)
 ```python
- 626     def render_template(self, template_name: str, **context) -> str:
- 627         """
- 628         Render a template with the given context.
- 629 
- 630         Args:
- 631             template_name: Name of the template file
- 632             **context: Additional context variables
- 633 
- 634         Returns:
- 635             Rendered template as string
- 636         """
- 637         try:
- 638             # Load custom tags from .projected-source.py if available
- 639             template_path = self.template_dir / template_name
- 640             self._load_custom_tags(template_path)
- 641 
- 642             template = self.env.get_template(template_name)
- 643             return template.render(**context)
- 644         except jinja2.TemplateNotFound:
- 645             logger.error(f"Template not found: {template_name}")
- 646             raise
- 647         except Exception as e:
- 648             logger.error(f"Template rendering failed: {e}")
- 649             raise
+ 627     def render_template(self, template_name: str, **context) -> str:
+ 628         """
+ 629         Render a template with the given context.
+ 630 
+ 631         Args:
+ 632             template_name: Name of the template file
+ 633             **context: Additional context variables
+ 634 
+ 635         Returns:
+ 636             Rendered template as string
+ 637         """
+ 638         try:
+ 639             # Load custom tags from .projected-source.py if available
+ 640             template_path = self.template_dir / template_name
+ 641             self._load_custom_tags(template_path)
+ 642 
+ 643             template = self.env.get_template(template_name)
+ 644             return template.render(**context)
+ 645         except jinja2.TemplateNotFound:
+ 646             logger.error(f"Template not found: {template_name}")
+ 647             raise
+ 648         except Exception as e:
+ 649             logger.error(f"Template rendering failed: {e}")
+ 650             raise
 ```
 
 ---
@@ -728,7 +730,7 @@ Every extracted code block can include a clickable GitHub permalink. The `GitHub
 
 Repository info is loaded on first access. The class auto-detects the GitHub URL from the git remote, handling both SSH and HTTPS formats:
 
-📍 [`projected_source/core/github.py:186-228`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/github.py#L186-L228)
+📍 [`projected_source/core/github.py:186-228`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/github.py#L186-L228)
 ```python
  186     def _init_repo_info(self):
  187         """Lazy initialization of repository information."""
@@ -781,7 +783,7 @@ When you're working on a file with uncommitted changes, the line numbers in your
 
 The full-diff parser builds a line-by-line mapping from new to old positions:
 
-📍 [`projected_source/core/github.py:37-83`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/github.py#L37-L83)
+📍 [`projected_source/core/github.py:37-83`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/github.py#L37-L83)
 ```python
   37 def build_line_mapping(diff_output: str) -> Dict[int, Optional[int]]:
   38     """
@@ -834,7 +836,7 @@ The full-diff parser builds a line-by-line mapping from new to old positions:
 
 This mapping is used by `map_to_committed_line()`, which falls back gracefully — if a line was newly added, it finds the nearest existing line before it:
 
-📍 [`projected_source/core/github.py:138-173`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/github.py#L138-L173)
+📍 [`projected_source/core/github.py:138-173`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/github.py#L138-L173)
 ```python
  138 def map_line_to_committed_full(new_line: int, diff_output: str) -> int:
  139     """
@@ -878,7 +880,7 @@ This mapping is used by `map_to_committed_line()`, which falls back gracefully �
 
 The `get_permalink()` method ties it all together — it maps lines, builds the URL with line anchors, and returns a markdown link:
 
-📍 [`projected_source/core/github.py:313-388`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/github.py#L313-L388)
+📍 [`projected_source/core/github.py:313-388`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/github.py#L313-L388)
 ```python
  313     def get_permalink(
  314         self, file_path: Path, start_line: int = None, end_line: int = None, display_committed_lines: bool = True
@@ -962,7 +964,7 @@ The `get_permalink()` method ties it all together — it maps lines, builds the 
 
 For deeper code archaeology, `blame=True` annotates each line with its author, date, and commit hash:
 
-📍 [`projected_source/core/github.py:451-481`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/github.py#L451-L481)
+📍 [`projected_source/core/github.py:451-481`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/github.py#L451-L481)
 ```python
  451     def format_with_blame(self, code_text: str, start_line: int, file_path: Path) -> str:
  452         """
@@ -1007,7 +1009,7 @@ One of the most powerful features: projected-source can verify that your documen
 
 The `ChangesSet` class tracks changed regions as a set of non-overlapping intervals per file. It supports adding regions (which auto-merge overlapping ranges), subtracting regions (which can split intervals), and querying what's left uncovered:
 
-📍 [`projected_source/core/changes_set.py:27-248`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/changes_set.py#L27-L248)
+📍 [`projected_source/core/changes_set.py:27-248`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/changes_set.py#L27-L248)
 ```python
   27 class ChangesSet:
   28     """
@@ -1237,7 +1239,7 @@ The `ChangesSet` class tracks changed regions as a set of non-overlapping interv
 
 `from_diff()` parses unified diff output to populate the set. It supports both simple base refs (`origin/main`) and explicit ranges (`HEAD~5..HEAD~2`):
 
-📍 [`projected_source/core/changes_set.py:40-73`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/changes_set.py#L40-L73)
+📍 [`projected_source/core/changes_set.py:40-73`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/changes_set.py#L40-L73)
 ```python
   40     @classmethod
   41     def from_diff(cls, base: Optional[str] = None, repo_path: Optional[Path] = None) -> "ChangesSet":
@@ -1277,7 +1279,7 @@ The `ChangesSet` class tracks changed regions as a set of non-overlapping interv
 
 The diff parser walks through hunk headers and added lines to build up the initial set of changed regions:
 
-📍 [`projected_source/core/changes_set.py:105-144`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/changes_set.py#L105-L144)
+📍 [`projected_source/core/changes_set.py:105-144`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/changes_set.py#L105-L144)
 ```python
  105     def _parse_diff(self, diff_output: str, repo_path: Path) -> None:
  106         """Parse unified diff output and populate regions."""
@@ -1325,7 +1327,7 @@ The diff parser walks through hunk headers and added lines to build up the initi
 
 As templates render, each `code()` call subtracts its extracted region. The `subtract()` method handles partial overlaps — if documentation covers the middle of a changed region, it splits into two uncovered remainders:
 
-📍 [`projected_source/core/changes_set.py:179-219`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/changes_set.py#L179-L219)
+📍 [`projected_source/core/changes_set.py:179-219`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/changes_set.py#L179-L219)
 ```python
  179     def subtract(self, file_path: Path, start: int, end: int) -> None:
  180         """
@@ -1372,7 +1374,7 @@ As templates render, each `code()` call subtracts its extracted region. The `sub
 
 After rendering, `uncovered()` returns whatever's left:
 
-📍 [`projected_source/core/changes_set.py:221-227`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/core/changes_set.py#L221-L227)
+📍 [`projected_source/core/changes_set.py:221-227`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/core/changes_set.py#L221-L227)
 ```python
  221     def uncovered(self) -> List[ChangeRegion]:
  222         """Return list of regions not yet claimed by documentation."""
@@ -1389,7 +1391,7 @@ After rendering, `uncovered()` returns whatever's left:
 
 The CLI is built with Click. The main entry point registers all commands:
 
-📍 [`projected_source/cli/__init__.py:19-29`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/cli/__init__.py#L19-L29)
+📍 [`projected_source/cli/__init__.py:19-29`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/cli/__init__.py#L19-L29)
 ```python
   19 @click.group()
   20 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
@@ -1410,7 +1412,7 @@ The primary command renders `.md.j2` templates. It handles single files, directo
 
 Single-file rendering resolves the template path, creates a `TemplateRenderer`, and writes the output:
 
-📍 [`projected_source/cli/render.py:356-386`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/cli/render.py#L356-L386)
+📍 [`projected_source/cli/render.py:356-386`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/cli/render.py#L356-L386)
 ```python
  356 def _render_file(
  357     input_file, output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None, header=False
@@ -1447,7 +1449,7 @@ Single-file rendering resolves the template path, creates a `TemplateRenderer`, 
 
 Directory rendering walks the tree and renders all `.j2` files:
 
-📍 [`projected_source/cli/render.py:389-446`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/cli/render.py#L389-L446)
+📍 [`projected_source/cli/render.py:389-446`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/cli/render.py#L389-L446)
 ```python
  389 def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False, changes_set=None, header=False):
  390     """Render all templates in a directory."""
@@ -1513,7 +1515,7 @@ Directory rendering walks the tree and renders all `.j2` files:
 
 The `list-functions` command is essential for authoring templates — it shows every extractable symbol in a file, including the parameter you'd use in a `code()` call:
 
-📍 [`projected_source/cli/list_symbols.py:14-96`](https://github.com/sublimator/projected-source/blob/6e395f04ace5a92f6008da826ef72303d2146758/projected_source/cli/list_symbols.py#L14-L96)
+📍 [`projected_source/cli/list_symbols.py:14-96`](https://github.com/sublimator/projected-source/blob/0271e56eb5b94bd61dcc0aed3c707a2101add283/projected_source/cli/list_symbols.py#L14-L96)
 ```python
   14 @click.command("list-functions")
   15 @click.argument("file", required=False, type=click.Path(exists=True))
