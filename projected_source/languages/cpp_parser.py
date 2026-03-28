@@ -162,6 +162,18 @@ class SimpleCppParser:
                                 if result:
                                     return result
 
+            # Check for extern function declarations (declaration with function_declarator)
+            elif node.type == "declaration" and "function_definition" in node_types:
+                for child in node.children:
+                    if child.type == "function_declarator":
+                        found_name, found_qualifiers = self._extract_function_name_and_qualifiers(child, context_stack)
+                        if found_name == target_leaf_name:
+                            if not qualifiers:
+                                return node
+                            elif self._qualifiers_match(found_qualifiers, qualifiers):
+                                return node
+                        break
+
             # Check for variable/constant declarations
             elif node.type == "declaration" and "declaration" in node_types:
                 # Find the variable name from init_declarator
@@ -506,6 +518,16 @@ class SimpleCppParser:
                         if self._qualifiers_match(found_qualifiers, qualifiers):
                             results.append(node)
 
+            # Check for extern function declarations (declaration with function_declarator)
+            elif node.type == "declaration" and "function_definition" in node_types:
+                for child in node.children:
+                    if child.type == "function_declarator":
+                        found_name, found_qualifiers = self._extract_function_name_and_qualifiers(child, context_stack)
+                        if found_name == target_leaf_name:
+                            if self._qualifiers_match(found_qualifiers, qualifiers):
+                                results.append(node)
+                        break
+
             # Check for field declarations (class method declarations in headers)
             elif node.type == "field_declaration" and "function_definition" in node_types:
                 # field_declaration can contain a function_declarator for method declarations
@@ -666,9 +688,9 @@ class SimpleCppParser:
                     target_node = child
                     break
 
-        # Handle field_declaration (class method declarations in headers)
+        # Handle field_declaration and declaration (extern/forward declarations)
         # These don't have a "declarator" field - function_declarator is a direct child
-        if target_node.type == "field_declaration":
+        if target_node.type in ("field_declaration", "declaration"):
             for child in target_node.children:
                 if child.type == "function_declarator":
                     params_node = child.child_by_field_name("parameters")
@@ -946,6 +968,25 @@ class SimpleCppParser:
                 return
 
             if node.type == "declaration":
+                # Check for extern/forward function declarations (function_declarator child)
+                for child in node.children:
+                    if child.type == "function_declarator":
+                        name, qualifiers = self._extract_function_name_and_qualifiers(child, context_stack)
+                        if name:
+                            qualified = "::".join(qualifiers + [name]) if qualifiers else name
+                            sig = self._extract_parameter_signature(node)
+                            symbols.append(
+                                {
+                                    "name": qualified,
+                                    "kind": "function",
+                                    "param": "function",
+                                    "line": node.start_point.row + 1,
+                                    "signature": sig,
+                                }
+                            )
+                        return
+
+                # Check for variable declarations (init_declarator child)
                 var_name = None
                 for child in node.children:
                     if child.type == "init_declarator":
