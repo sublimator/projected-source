@@ -1,81 +1,118 @@
 """
 Bug report guide command - outputs instructions for reporting extraction bugs.
+
+Dynamically locates the projected-source repo from the installed package
+so fixture paths are always correct.
 """
+
+from pathlib import Path
 
 import click
 
-GUIDE = """\
+
+def _find_repo_root() -> Path:
+    """Find the projected-source repo root from the package location."""
+    # Walk up from this file to find the repo root (contains pyproject.toml)
+    current = Path(__file__).resolve().parent
+    while current != current.parent:
+        if (current / "pyproject.toml").exists() and (current / "tests").exists():
+            return current
+        current = current.parent
+    return Path(__file__).resolve().parent.parent.parent
+
+
+def _build_guide() -> str:
+    repo = _find_repo_root()
+    fixtures = repo / "tests" / "fixtures"
+    tests = repo / "tests"
+
+    return f"""\
 # projected-source Bug Report Guide
 
-When an extraction fails or returns wrong results, report it with the info below.
+When an extraction fails or returns wrong results, follow the steps below.
 
-## What to include
+## 1. Gather the info
 
-1. **The extraction call that failed** - the exact `code()` call from your template:
-   ```
-   {{ code('path/to/file.cpp', function='ClassName::methodName') }}
-   ```
+- **The extraction call that failed** — the exact `code()` call from your template
+- **The error message** or description of wrong output
+- **The source file** — absolute path to the file being extracted
+- **What you expected** — which lines / which function you wanted
 
-2. **What happened** - error message, or description of wrong output (e.g. "got the
-   declaration instead of the definition")
+## 2. Check list-functions vs code()
 
-3. **What you expected** - which lines / which version of the function you wanted
+```bash
+# Does list-functions find the symbol?
+projected-source list-functions /path/to/file.cpp
 
-4. **The source file path** - absolute or repo-relative path to the file being extracted
+# Does code() fail on it?
+echo "{{{{ code('/path/to/file.cpp', function='Name', github=False) }}}}" | projected-source render - - --no-header
+```
 
-5. **Relevant source snippet** - if the file is large, include the ~50 lines around
-   both the expected match and the wrong match
+If `list-functions` finds it but `code()` fails, that's a bug in the extraction path.
 
-## Quick copy-paste template
+## 3. Create a fixture and failing test
+
+**Repo root:** `{repo}`
+**Fixtures directory:** `{fixtures}`
+**Tests directory:** `{tests}`
+
+### Copy the source file:
+
+```bash
+cp /path/to/problem-file.cpp {fixtures}/cpp/
+# or for other languages:
+# {fixtures}/python/
+# {fixtures}/  (for .proto, .java, .ts, etc.)
+```
+
+### Write a failing test:
+
+Create `{tests}/test_your_bug.py`:
+
+```python
+from pathlib import Path
+from projected_source.languages.cpp import CppExtractor
+
+FIXTURE = Path(__file__).parent / "fixtures" / "cpp" / "problem_file.cpp"
+
+def test_extract_fails():
+    ext = CppExtractor()
+    text, start, end = ext.extract_function(FIXTURE, "ClassName::method")
+    assert "expected_content" in text
+```
+
+### Run the test:
+
+```bash
+cd {repo}
+uv run pytest {tests}/test_your_bug.py -v
+```
+
+## 4. Quick copy-paste bug template
 
 ```
 ## Bug: [short description]
 
 **Template call:**
-{{ code('path/to/file.ext', function='name', signature='...') }}
+{{{{ code('path/to/file.ext', function='Name') }}}}
 
-**Error / wrong output:**
-[paste error or describe what was returned]
+**Error:**
+[paste error message]
 
 **Expected:**
-[describe what should have been extracted, include line numbers if known]
+[what should have been extracted, with line numbers]
 
-**Source file:** path/to/file.ext
-**Source snippet (around expected match):**
+**Source file:** /absolute/path/to/file.ext
+
+**list-functions output:**
+[paste relevant lines from projected-source list-functions]
+
+**Fixture copied to:** {fixtures}/cpp/filename.cpp
 ```
-[paste relevant lines]
-```
-```
-
-## Filing the bug
-
-Option A: Create an issue at https://github.com/nicholasdudfield/projected-source/issues
-Option B: Copy the source file to tests/fixtures/ and write a failing test
-
-## Creating a test fixture (preferred)
-
-If you can reproduce it:
-
-1. Copy the minimal source needed to `tests/fixtures/your_bug.cpp` (or .py, .proto)
-   - Strip to just the relevant declarations/definitions (~30-50 lines)
-   - Keep enough context to reproduce (class declarations, namespaces, etc.)
-
-2. Add a test to `tests/test_cpp_coverage.py` (or appropriate test file):
-   ```python
-   def test_your_bug_description(self, extractor):
-       from projected_source.languages.cpp_parser import SimpleCppParser
-       parser = SimpleCppParser()
-       source = (FIXTURES / "your_bug.cpp").read_bytes()
-       result = parser.extract_function_by_name(source, "ClassName::method")
-       assert result is not None
-       assert "expected_content" in result.text
-   ```
-
-3. Run: `uv run pytest tests/test_cpp_coverage.py::TestClass::test_your_bug -v`
 """
 
 
 @click.command("bug-report")
 def bug_report():
     """Output guide for reporting extraction bugs."""
-    click.echo(GUIDE)
+    click.echo(_build_guide())
