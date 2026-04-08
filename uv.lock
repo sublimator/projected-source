@@ -429,6 +429,7 @@ dependencies = [
     { name = "jinja2" },
     { name = "rich" },
     { name = "tree-sitter" },
+    { name = "tree-sitter-cmake" },
     { name = "tree-sitter-cpp" },
     { name = "tree-sitter-java" },
     { name = "tree-sitter-typescript" },
@@ -450,6 +451,7 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1" },
     { name = "rich", specifier = ">=14.0" },
     { name = "tree-sitter", specifier = ">=0.25" },
+    { name = "tree-sitter-cmake", specifier = ">=0.7.2.post1" },
     { name = "tree-sitter-cpp", specifier = ">=0.23.4" },
     { name = "tree-sitter-java", specifier = ">=0.23.5" },
     { name = "tree-sitter-typescript", specifier = ">=0.23.2" },
@@ -652,6 +654,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/57/e2/d42d55bf56360987c32bc7b16adb06744e425670b823fb8a5786a1cea991/tree_sitter-0.25.2-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:7d2ee1acbacebe50ba0f85fff1bc05e65d877958f00880f49f9b2af38dce1af0", size = 631522, upload-time = "2025-09-25T17:37:55.833Z" },
     { url = "https://files.pythonhosted.org/packages/03/87/af9604ebe275a9345d88c3ace0cf2a1341aa3f8ef49dd9fc11662132df8a/tree_sitter-0.25.2-cp314-cp314-win_amd64.whl", hash = "sha256:4973b718fcadfb04e59e746abfbb0288694159c6aeecd2add59320c03368c721", size = 130864, upload-time = "2025-09-25T17:37:57.453Z" },
     { url = "https://files.pythonhosted.org/packages/a6/6e/e64621037357acb83d912276ffd30a859ef117f9c680f2e3cb955f47c680/tree_sitter-0.25.2-cp314-cp314-win_arm64.whl", hash = "sha256:b8d4429954a3beb3e844e2872610d2a4800ba4eb42bb1990c6a4b1949b18459f", size = 117470, upload-time = "2025-09-25T17:37:58.431Z" },
+]
+
+[[package]]
+name = "tree-sitter-cmake"
+version = "0.7.2.post1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d0/f4/928d5378ef701577ef1b19658fc626a8c70b32447148898771a17c3c66a1/tree_sitter_cmake-0.7.2.post1.tar.gz", hash = "sha256:64a3751ca67f37112821d67057b8de6ecab5c7e94d6053467a4b78ceab348640", size = 47174, upload-time = "2025-11-24T08:59:05.881Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f8/0b/820ab5f8581f3b39e4bb6837e9f8573d70cfa71e8530a7a97355898b8751/tree_sitter_cmake-0.7.2.post1-cp310-abi3-win_amd64.whl", hash = "sha256:c1b7a754e17442087df3efccea6535a9f2a8c4b4bf558e31fd3caccd8d1ce830", size = 28032, upload-time = "2025-11-24T08:59:04.794Z" },
 ]
 
 [[package]]

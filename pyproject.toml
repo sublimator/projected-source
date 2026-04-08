@@ -18,6 +18,7 @@ dependencies = [
     "gitpython>=3.1.45",
     "tree-sitter-typescript>=0.23.2",
     "tree-sitter-java>=0.23.5",
+    "tree-sitter-cmake>=0.7.2.post1",
 ]
 
 [project.scripts]
