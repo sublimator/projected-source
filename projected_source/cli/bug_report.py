@@ -12,7 +12,6 @@ import click
 
 def _find_repo_root() -> Path:
     """Find the projected-source repo root from the package location."""
-    # Walk up from this file to find the repo root (contains pyproject.toml)
     current = Path(__file__).resolve().parent
     while current != current.parent:
         if (current / "pyproject.toml").exists() and (current / "tests").exists():
@@ -24,21 +23,14 @@ def _find_repo_root() -> Path:
 def _build_guide() -> str:
     repo = _find_repo_root()
     fixtures = repo / "tests" / "fixtures"
-    tests = repo / "tests"
+    bugs = repo / "bugs"
 
     return f"""\
 # projected-source Bug Report Guide
 
 When an extraction fails or returns wrong results, follow the steps below.
 
-## 1. Gather the info
-
-- **The extraction call that failed** — the exact `code()` call from your template
-- **The error message** or description of wrong output
-- **The source file** — absolute path to the file being extracted
-- **What you expected** — which lines / which function you wanted
-
-## 2. Check list-functions vs code()
+## 1. Check list-functions vs code()
 
 ```bash
 # Does list-functions find the symbol?
@@ -50,51 +42,33 @@ echo "{{{{ code('/path/to/file.cpp', function='Name', github=False) }}}}" | proj
 
 If `list-functions` finds it but `code()` fails, that's a bug in the extraction path.
 
-## 3. Create a fixture and failing test
-
-**Repo root:** `{repo}`
-**Fixtures directory:** `{fixtures}`
-**Tests directory:** `{tests}`
-
-### Copy the source file:
+## 2. Copy the source file to fixtures
 
 ```bash
 cp /path/to/problem-file.cpp {fixtures}/cpp/
-# or for other languages:
-# {fixtures}/python/
-# {fixtures}/  (for .proto, .java, .ts, etc.)
 ```
 
-### Write a failing test:
+Other languages:
+- `{fixtures}/python/` for .py files
+- `{fixtures}/` for .proto, .java, .ts, etc.
 
-Create `{tests}/test_your_bug.py`:
+## 3. Write a bug report
 
-```python
-from pathlib import Path
-from projected_source.languages.cpp import CppExtractor
-
-FIXTURE = Path(__file__).parent / "fixtures" / "cpp" / "problem_file.cpp"
-
-def test_extract_fails():
-    ext = CppExtractor()
-    text, start, end = ext.extract_function(FIXTURE, "ClassName::method")
-    assert "expected_content" in text
-```
-
-### Run the test:
+Create a markdown file in `{bugs}/`:
 
 ```bash
-cd {repo}
-uv run pytest {tests}/test_your_bug.py -v
+mkdir -p {bugs}
 ```
 
-## 4. Quick copy-paste bug template
+Save as `{bugs}/your-bug-name.md`:
 
-```
+```markdown
 ## Bug: [short description]
 
 **Template call:**
+\\```
 {{{{ code('path/to/file.ext', function='Name') }}}}
+\\```
 
 **Error:**
 [paste error message]
@@ -103,12 +77,19 @@ uv run pytest {tests}/test_your_bug.py -v
 [what should have been extracted, with line numbers]
 
 **Source file:** /absolute/path/to/file.ext
+**Fixture:** tests/fixtures/cpp/filename.cpp
 
 **list-functions output:**
+\\```
 [paste relevant lines from projected-source list-functions]
-
-**Fixture copied to:** {fixtures}/cpp/filename.cpp
+\\```
 ```
+
+## Paths
+
+- **Repo root:** `{repo}`
+- **Fixtures:** `{fixtures}`
+- **Bug reports:** `{bugs}`
 """
 
 
