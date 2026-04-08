@@ -784,6 +784,11 @@ class SimpleCppParser:
         if not nodes:
             return None
 
+        # Deduplicate: prefer definitions over declarations (declaration in .h + definition in .cpp)
+        definitions = [n for n in nodes if n.type in ("function_definition", "template_declaration")]
+        if definitions:
+            nodes = definitions
+
         if signature is not None:
             # Filter by signature
             matching = []
@@ -813,11 +818,9 @@ class SimpleCppParser:
             if exact:
                 nodes = exact
 
-        # Prefer nodes with bodies (function_definition, template_declaration wrapping
-        # a function_definition) over field_declaration (just a declaration)
-        definitions = [n for n in nodes if n.type in ("function_definition", "template_declaration")]
-        if definitions:
-            return _node_to_result(definitions[0], function_name)
+        # Return the first (best) match
+        if nodes and nodes[0].type in ("function_definition", "template_declaration"):
+            return _node_to_result(nodes[0], function_name)
 
         # Handle macro-attributed functions where tree-sitter splits the signature
         # and body into: declaration + expression_statement + compound_statement
