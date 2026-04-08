@@ -658,6 +658,34 @@ class SimpleCppParser:
         idx = q.find("<")
         return q[:idx] if idx >= 0 else q
 
+    @staticmethod
+    def _find_following_body(decl_node: Node) -> Optional[Node]:
+        """Find a compound_statement following a declaration node.
+
+        Handles the pattern where tree-sitter splits a macro-attributed function:
+            declaration ; expression_statement ; compound_statement
+        Returns the compound_statement if found within a few siblings.
+        """
+        parent = decl_node.parent
+        if not parent:
+            return None
+
+        found_decl = False
+        siblings_after = 0
+        for child in parent.children:
+            if found_decl:
+                siblings_after += 1
+                if child.type == "compound_statement":
+                    return child
+                # Allow skipping expression_statement (attribute macros) and
+                # other noise, but don't look too far
+                if siblings_after > 3:
+                    break
+            elif child.id == decl_node.id:
+                found_decl = True
+
+        return None
+
     def _qualifiers_match(self, found: List[str], target: List[str]) -> bool:
         """Check if qualifier lists match (template args are compared flexibly)."""
         if not target:
@@ -791,7 +819,26 @@ class SimpleCppParser:
         if definitions:
             return _node_to_result(definitions[0], function_name)
 
-        # Fall back to declaration (e.g., header-only code)
+        # Handle macro-attributed functions where tree-sitter splits the signature
+        # and body into: declaration + expression_statement + compound_statement
+        for node in nodes:
+            if node.type == "declaration":
+                body_node = self._find_following_body(node)
+                if body_node:
+                    # Combine declaration and body into a single result
+                    text = source_code[node.start_byte : body_node.end_byte].decode("utf8")
+                    return ExtractionResult(
+                        text=text,
+                        start_line=node.start_point.row + 1,
+                        end_line=body_node.end_point.row + 1,
+                        start_column=node.start_point.column,
+                        end_column=body_node.end_point.column,
+                        node=None,  # Synthetic — spans multiple nodes
+                        node_type="function_definition",
+                        qualified_name=function_name,
+                    )
+
+        # Fall back to declaration (e.g., header-only code, extern declarations)
         return _node_to_result(nodes[0], function_name)
 
     def extract_struct_or_class_by_name(self, source_code: bytes, name: str) -> Optional[ExtractionResult]:

@@ -123,39 +123,47 @@ class CppExtractor(BaseExtractor):
     def extract_function_marker(self, file_path: Path, function_name: str, marker: str) -> Tuple[str, int, int]:
         """Extract a marked section from within a function.
 
-        When multiple overloads exist (including template vs non-template),
-        searches all of them to find the one containing the marker.
+        When multiple overloads exist, searches all of them for the marker.
+        Also handles macro-attributed functions via extract_function.
         """
         source = file_path.read_bytes()
+        from .extraction_result import ExtractionResult
 
-        # Find ALL functions with this name (handles template vs non-template, overloads)
+        # Find ALL overloads and search each for the marker
         nodes = self.cpp_parser._find_all_nodes_by_qualified_name(source, function_name, ["function_definition"])
-
         if not nodes:
             raise ValueError(f"Function '{function_name}' not found in {file_path}")
 
-        # Search each overload for the marker
-        from .extraction_result import ExtractionResult
-
         for node in nodes:
-            text = node.text.decode("utf8") if node.text else ""
-            result = ExtractionResult(
-                text=text,
-                start_line=node.start_point.row + 1,
-                end_line=node.end_point.row + 1,
-                start_column=node.start_point.column,
-                end_column=node.end_point.column,
-                node=node,
-                node_type=node.type,
-                qualified_name=function_name,
-            )
+            # For each node, build an ExtractionResult covering the full function
+            # (including body for macro-attributed functions)
+            if node.type == "declaration":
+                body_node = self.cpp_parser._find_following_body(node)
+                if body_node:
+                    text = source[node.start_byte : body_node.end_byte].decode("utf8")
+                    search_node = body_node
+                    start = node.start_point.row + 1
+                    end = body_node.end_point.row + 1
+                else:
+                    continue  # Declaration-only, no body to search
+            else:
+                text = node.text.decode("utf8") if node.text else ""
+                search_node = node
+                start = node.start_point.row + 1
+                end = node.end_point.row + 1
 
-            # Check if this overload has the marker
-            markers = self.find_markers_in_node(node)
+            markers = self.find_markers_in_node(search_node)
             if marker in markers:
+                result = ExtractionResult(
+                    text=text,
+                    start_line=start,
+                    end_line=end,
+                    node=search_node,
+                    node_type=node.type,
+                    qualified_name=function_name,
+                )
                 return self._extract_node_marker(file_path, result, marker, f"function '{function_name}'")
 
-        # No overload had the marker
         raise ValueError(
             f"Marker '{marker}' not found in any overload of function '{function_name}'. "
             f"Found {len(nodes)} overload(s) but none contain the marker."
@@ -334,13 +342,15 @@ class CppExtractor(BaseExtractor):
         root = self.parse_file(file_path)
         markers = self.find_markers_in_node(root)
         for marker_name, (start_line, end_line) in markers.items():
-            symbols.append({
-                "name": marker_name,
-                "kind": "marker",
-                "param": "marker",
-                "line": start_line,
-                "end_line": end_line,
-            })
+            symbols.append(
+                {
+                    "name": marker_name,
+                    "kind": "marker",
+                    "param": "marker",
+                    "line": start_line,
+                    "end_line": end_line,
+                }
+            )
 
         return symbols
 
