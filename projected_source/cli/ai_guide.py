@@ -40,9 +40,18 @@ for accurate AST-based parsing.
 
 ## IMPORTANT: Prefer the Smallest Stable Reference
 
-Do not blindly prefer whole-symbol extraction. Prefer the smallest extract that
-is both stable AND useful for the reader. Pulling in a 400-line orchestration
-function when you're documenting one decision point buries the point.
+All extraction modes except `lines=` are **symbolic** — they survive
+refactoring. The choice between them is about granularity, not stability:
+
+- **Non-invasive symbols** (`function=`, `struct=`, `var=`, `message=`, etc.)
+  read what's already there. Free, but extract whole units.
+- **Invasive symbols** (`marker=`, `function='X', marker='Y'`) require adding
+  `//@@start name` / `//@@end name` comments to the source. Costs a source
+  edit, but lets you point at exactly the lines that matter.
+
+Prefer the smallest extract that is both stable AND useful for the reader.
+A 400-line orchestration function with one interesting decision point buries
+the point — add a marker around the gate and reference that.
 
 Extraction priority (best to worst):
 1. `function='Name', marker='section-name'` - specific logic inside a large function
@@ -51,14 +60,6 @@ Extraction priority (best to worst):
 4. `function_macro=` / `macro_definition=` - C/C++ macro-based code
 5. `marker='section-name'` - cross-cutting or non-symbol regions
 6. `lines=(start, end)` - last resort, fragile, breaks when code changes
-
-**Why symbolic refs?** They survive refactoring. If someone renames a function,
-you get a clear error. With line numbers, you silently get wrong code.
-
-**Why not always whole-symbol?** A 400-line function with one interesting
-gate buries the gate. Add a named marker (`//@@start gate-check` /
-`//@@end gate-check`) around the decision point and reference that. The
-reader sees just the relevant code in context of the function name.
 
 ## CLI Usage
 
