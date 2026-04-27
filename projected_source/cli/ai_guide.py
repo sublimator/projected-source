@@ -127,6 +127,25 @@ projected-source render docs/ -V auto --strict     # exit 1 if uncovered
 {{{{ code('src/file.cpp', function='foo', root='/path/to/repo') }}}} {{# different root #}}
 ```
 
+### Comments - Author notes that don't render
+
+Jinja2 `{{# ... #}}` comments are stripped at render time. Use them for
+template-author notes that shouldn't appear in the output `.md`:
+
+```jinja
+{{# This entire block is gone in the rendered output #}}
+{{# TODO: also document the caller of this function #}}
+{{# Multi-line works too:
+   notes for whoever maintains this template
+   that nobody downstream sees #}}
+
+{{{{ code('src/file.cpp', function='foo') }}}}
+```
+
+Distinct from markdown `<!-- ... -->` comments, which persist in the output.
+Use Jinja2 comments for "why I extracted this" notes; use markdown comments
+when you want the comment to survive into the rendered file.
+
 ### include() - Include peer files
 
 ```jinja
