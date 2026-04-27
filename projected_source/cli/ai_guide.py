@@ -38,21 +38,27 @@ for accurate AST-based parsing.
 
 {supported}
 
-## IMPORTANT: Prefer Symbolic References
+## IMPORTANT: Prefer the Smallest Stable Reference
 
-**Always prefer symbolic extraction over markers or line ranges.**
+Do not blindly prefer whole-symbol extraction. Prefer the smallest extract that
+is both stable AND useful for the reader. Pulling in a 400-line orchestration
+function when you're documenting one decision point buries the point.
 
 Extraction priority (best to worst):
-1. `function='Name'` - functions, methods (use `signature=` for overloads)
-2. `struct='Name'` / `var='Name'` - types, constants, variables
-3. `message='Name'` / `enum='Name'` / `service='Name'` - protobuf definitions
+1. `function='Name', marker='section-name'` - specific logic inside a large function
+2. `function='Name'` - when the function is short enough to read as a unit
+3. `struct=`, `message=`, `enum=`, `var=` - when the whole definition is relevant
 4. `function_macro=` / `macro_definition=` - C/C++ macro-based code
-5. `function='X', marker='Y'` - subsection within a function (when needed)
-6. `marker='X'` - standalone markers (last resort)
-7. `lines=(start, end)` - fragile, breaks when code changes
+5. `marker='section-name'` - cross-cutting or non-symbol regions
+6. `lines=(start, end)` - last resort, fragile, breaks when code changes
 
-**Why?** Symbolic refs survive refactoring. If someone renames a function,
+**Why symbolic refs?** They survive refactoring. If someone renames a function,
 you get a clear error. With line numbers, you silently get wrong code.
+
+**Why not always whole-symbol?** A 400-line function with one interesting
+gate buries the gate. Add a named marker (`//@@start gate-check` /
+`//@@end gate-check`) around the decision point and reference that. The
+reader sees just the relevant code in context of the function name.
 
 ## CLI Usage
 
