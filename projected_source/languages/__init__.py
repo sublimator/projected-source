@@ -9,6 +9,7 @@ from .cpp import CppExtractor
 from .java import JavaExtractor
 from .proto import ProtoExtractor
 from .python import PythonExtractor
+from .rust import RustExtractor
 from .typescript import TypeScriptExtractor
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ EXTRACTORS = {
     ".mts": TypeScriptExtractor,  # TypeScript ES module
     ".cts": TypeScriptExtractor,  # TypeScript CommonJS module
     ".java": JavaExtractor,  # Java
+    ".rs": RustExtractor,  # Rust
 }
 
 

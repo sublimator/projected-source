@@ -2,6 +2,7 @@
 List extractable symbols in a source file.
 """
 
+import inspect
 from collections import Counter
 from pathlib import Path
 
@@ -13,7 +14,13 @@ from .helpers import console
 
 @click.command("list-functions")
 @click.argument("file", required=False, type=click.Path(exists=True))
-def list_functions(file):
+@click.option(
+    "--include-tests",
+    is_flag=True,
+    default=False,
+    help="Rust only: include items inside #[cfg(test)] modules (hidden by default).",
+)
+def list_functions(file, include_tests):
     """List extractable symbols in a file.
 
     When FILE is given, lists all functions, classes, structs, enums,
@@ -37,7 +44,11 @@ def list_functions(file):
         console.print(f"[red]Symbol listing not supported for {file_path.suffix} files[/red]")
         raise SystemExit(1)
 
-    symbols = extractor.list_symbols(file_path)
+    list_kwargs = {}
+    if include_tests and "include_tests" in inspect.signature(extractor.list_symbols).parameters:
+        list_kwargs["include_tests"] = True
+
+    symbols = extractor.list_symbols(file_path, **list_kwargs)
 
     if not symbols:
         console.print(f"[yellow]No extractable symbols found in {file}[/yellow]")
