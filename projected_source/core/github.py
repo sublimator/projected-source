@@ -339,11 +339,12 @@ class GitHubIntegration:
             # Map line numbers if file is dirty (has uncommitted changes like markers)
             committed_start = None
             committed_end = None
-            is_dirty = False
+            # Track dirty state authoritatively, not via line-number drift —
+            # a file can be edited without shifting the lines we render.
+            is_dirty = self.is_file_dirty(file_path)
 
             if start_line is not None:
                 committed_start = self.map_to_committed_line(file_path, start_line)
-                is_dirty = committed_start != start_line
                 if end_line is not None:
                     committed_end = self.map_to_committed_line(file_path, end_line)
 
@@ -375,8 +376,10 @@ class GitHubIntegration:
             else:
                 display = str(rel_path)
 
-            # Return as markdown link
-            return f"📍 [`{display}`]({url})"
+            # Surface dirty state so readers know the link points at HEAD content,
+            # which may differ from what's rendered above.
+            suffix = " *(uncommitted)*" if is_dirty else ""
+            return f"📍 [`{display}`]({url}){suffix}"
         else:
             # No GitHub info, return plain text
             if start_line is not None:
