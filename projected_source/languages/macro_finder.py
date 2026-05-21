@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-Library for finding and extracting C/C++ macros using tree-sitter.
-Version 3: Ultra-DRY implementation with TypedDict and modern patterns.
+Library for finding and extracting C/C++ macro USAGES using tree-sitter.
+
+See ``macro_definition_finder.py`` for the companion that finds macro
+DEFINITIONS.
 """
 
 import logging
@@ -411,7 +413,7 @@ class MacroFinder:
 
 
 def demo():
-    """Demo the ultra-DRY MacroFinder v3."""
+    """Demo the MacroFinder."""
     sample_code = b"""
     #include <stdio.h>
     
@@ -437,7 +439,7 @@ def demo():
     """
 
     print("=" * 80)
-    print("Demo: Ultra-DRY MacroFinder v3 with TypedDict")
+    print("Demo: MacroFinder")
     print("=" * 80)
 
     with MacroFinder() as finder:

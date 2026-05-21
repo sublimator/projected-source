@@ -2,7 +2,7 @@
 """
 Find and extract C/C++ macro DEFINITIONS (#define statements) using tree-sitter.
 
-This is different from macro_finder_v3.py which finds macro USAGES.
+This is different from macro_finder.py which finds macro USAGES.
 This module finds the actual #define statements themselves.
 """
 

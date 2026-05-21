@@ -138,7 +138,7 @@ class TestFunctionMacroArgExtraction:
 
     def test_define_hook_function_args(self):
         """Test that DEFINE_HOOK_FUNCTION args are extracted correctly."""
-        from projected_source.languages.macro_finder_v3 import MacroFinder
+        from projected_source.languages.macro_finder import MacroFinder
 
         mf = MacroFinder()
         source = b"""
@@ -157,7 +157,7 @@ DEFINE_HOOK_FUNCTION(int64_t, xport_reserve, uint32_t count)
 
     def test_typed_sfield_args(self):
         """Test that TYPED_SFIELD macro call args are extracted."""
-        from projected_source.languages.macro_finder_v3 import MacroFinder
+        from projected_source.languages.macro_finder import MacroFinder
 
         mf = MacroFinder()
         source = b"""

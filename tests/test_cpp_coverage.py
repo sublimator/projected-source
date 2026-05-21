@@ -1,6 +1,6 @@
 """Coverage-driven tests for C++ extraction modules.
 
-Targets uncovered paths in cpp.py, macro_finder_v3.py,
+Targets uncovered paths in cpp.py, macro_finder.py,
 macro_definition_finder.py, and cpp_parser.py.
 """
 
@@ -10,7 +10,7 @@ import pytest
 
 from projected_source.languages.cpp import CppExtractor
 from projected_source.languages.macro_definition_finder import MacroDefinitionFinder
-from projected_source.languages.macro_finder_v3 import MacroFinder
+from projected_source.languages.macro_finder import MacroFinder
 
 FIXTURES = Path(__file__).parent / "fixtures"
 COMPLETE = FIXTURES / "complete.cpp"
@@ -170,11 +170,11 @@ class TestMacroDefinitionFinder:
         assert len(results) == 0
 
 
-# ==================== MacroFinder v3 ====================
+# ==================== MacroFinder ====================
 
 
 class TestMacroFinderPatternAndArg:
-    """Tests for macro_finder_v3 uncovered methods."""
+    """Tests for macro_finder uncovered methods."""
 
     def test_find_by_pattern(self, macro_finder):
         source = (

@@ -12,7 +12,7 @@ from tree_sitter import Language, Node, Query, QueryCursor
 from ..core.extractor import BaseExtractor
 from .cpp_parser import SimpleCppParser
 from .macro_definition_finder import MacroDefinitionFinder
-from .macro_finder_v3 import MacroFinder
+from .macro_finder import MacroFinder
 
 logger = logging.getLogger(__name__)
 
