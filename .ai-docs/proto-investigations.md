@@ -1,5 +1,10 @@
 # Proto Parser Investigation
 
+> **Resolved.** `coder3101/tree-sitter-proto` is now a pinned git dependency
+> (`tree-sitter-proto` in pyproject.toml), compiled from source at install
+> time. The earlier bundled arm64 `proto.so` has been removed — proto support
+> is now cross-platform. The notes below are kept for historical context.
+
 ## Goal
 Add `.proto` file support to projected-source for extracting protobuf definitions.
 
@@ -56,9 +61,10 @@ parser = Parser(PROTO)
 
 ## Next Steps
 1. [x] Find/test a proto2-compatible grammar - **coder3101 works!**
-2. [ ] Create proper Python binding package for coder3101/tree-sitter-proto
-3. [ ] Add ProtoExtractor to projected-source
-4. [ ] Support extracting: messages, enums, services, fields
+2. [x] Consume the grammar properly - upstream ships Python bindings; added as a
+       pinned git dependency rather than maintaining a separate binding package
+3. [x] Add ProtoExtractor to projected-source
+4. [x] Support extracting: messages, enums, services, fields
 
 ## Resources
 - Blog post: https://relistan.com/parsing-protobuf-files-with-treesitter

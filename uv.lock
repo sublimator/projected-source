@@ -432,6 +432,7 @@ dependencies = [
     { name = "tree-sitter-cmake" },
     { name = "tree-sitter-cpp" },
     { name = "tree-sitter-java" },
+    { name = "tree-sitter-proto" },
     { name = "tree-sitter-rust" },
     { name = "tree-sitter-typescript" },
 ]
@@ -455,6 +456,7 @@ requires-dist = [
     { name = "tree-sitter-cmake", specifier = ">=0.7.2.post1" },
     { name = "tree-sitter-cpp", specifier = ">=0.23.4" },
     { name = "tree-sitter-java", specifier = ">=0.23.5" },
+    { name = "tree-sitter-proto", git = "https://github.com/coder3101/tree-sitter-proto.git?rev=d65a18ce7c2242801f702770114ad08056c7f8c9" },
     { name = "tree-sitter-rust", specifier = ">=0.23.2" },
     { name = "tree-sitter-typescript", specifier = ">=0.23.2" },
 ]
@@ -696,6 +698,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/da/d6/0528c7e1e88a18221dbd8ccee3825bf274b1fa300f745fd74eb343878043/tree_sitter_java-0.23.5-cp39-abi3-win_amd64.whl", hash = "sha256:1ee45e790f8d31d416bc84a09dac2e2c6bc343e89b8a2e1d550513498eedfde7", size = 60650, upload-time = "2024-12-21T18:24:22.902Z" },
     { url = "https://files.pythonhosted.org/packages/72/57/5bab54d23179350356515526fff3cc0f3ac23bfbc1a1d518a15978d4880e/tree_sitter_java-0.23.5-cp39-abi3-win_arm64.whl", hash = "sha256:402efe136104c5603b429dc26c7e75ae14faaca54cfd319ecc41c8f2534750f4", size = 59059, upload-time = "2024-12-21T18:24:24.934Z" },
 ]
+
+[[package]]
+name = "tree-sitter-proto"
+version = "0.4.0"
+source = { git = "https://github.com/coder3101/tree-sitter-proto.git?rev=d65a18ce7c2242801f702770114ad08056c7f8c9#d65a18ce7c2242801f702770114ad08056c7f8c9" }
 
 [[package]]
 name = "tree-sitter-rust"

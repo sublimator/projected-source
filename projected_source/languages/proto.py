@@ -1,41 +1,30 @@
 """
 Protocol Buffers (.proto) code extraction using tree-sitter.
 
-Uses coder3101/tree-sitter-proto grammar which supports both proto2 and proto3.
+Uses the coder3101/tree-sitter-proto grammar (proto2 + proto3), installed as a
+pinned git dependency (``tree-sitter-proto`` in pyproject.toml) since it is not
+published to PyPI. The grammar's C source is compiled at install time, so this
+works on any platform with a C compiler — no prebuilt binary is bundled.
 """
 
-import ctypes
 import logging
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import tree_sitter_proto
 from tree_sitter import Language, Node, Parser
 
 from ..core.extractor import BaseExtractor
 
 logger = logging.getLogger(__name__)
 
-# Load the proto grammar from bundled .so file
-_PROTO_SO_PATH = Path(__file__).parent / "proto_grammar" / "proto.so"
-
-
-def _load_proto_language() -> Language:
-    """Load the proto language from the bundled .so file."""
-    if not _PROTO_SO_PATH.exists():
-        raise RuntimeError(
-            f"Proto grammar not found at {_PROTO_SO_PATH}. See .ai-docs/proto-investigations.md for build instructions."
-        )
-    lib = ctypes.CDLL(str(_PROTO_SO_PATH))
-    lib.tree_sitter_proto.restype = ctypes.c_void_p
-    return Language(lib.tree_sitter_proto())
-
 
 class ProtoExtractor(BaseExtractor):
     """Protocol Buffers extractor with message/enum extraction support."""
 
     def __init__(self):
-        self._language = _load_proto_language()
+        self._language = Language(tree_sitter_proto.language())
         super().__init__(self._language)
         self._parser = Parser(self._language)
 
