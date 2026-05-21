@@ -119,6 +119,13 @@ projected-source render docs/ -V auto --strict     # exit 1 if uncovered
 {{{{ code('src/app.py', struct='Handler') }}}}
 {{{{ code('src/app.py', var='MAX_SIZE') }}}}
 
+{{# Rust #}}
+{{{{ code('src/node.rs', function='start') }}}}
+{{{{ code('src/node.rs', function='NodeStore.store') }}}}  {{# method inside an impl block #}}
+{{{{ code('src/key.rs', struct='Key') }}}}
+{{{{ code('src/message.rs', enum='MessageType') }}}}
+{{{{ code('src/config.rs', var='MAX_SIZE') }}}}
+
 {{# Options #}}
 {{{{ code('src/file.cpp', function='foo', github=False) }}}}      {{# no permalink #}}
 {{{{ code('src/file.cpp', function='foo', line_numbers=False) }}}} {{# no line nums #}}
@@ -188,7 +195,7 @@ Use `{{% set %}}` to define repo paths, then use `root=` on code() or code_conte
 ## Marker Syntax in Source Files
 
 ```cpp
-// C/C++, Java, TypeScript, Protobuf
+// C/C++, Rust, Java, TypeScript, Protobuf
 //@@start section-name
 code here
 //@@end section-name
@@ -222,8 +229,9 @@ Example:
 
 1. **Prefer symbolic refs** - `function=`, `struct=`, `message=`, `enum=` over markers/lines
 2. **Use `signature=` for C++ overloads** - e.g., `function='onMessage', signature='TMProposeSet'`
-3. **Dotted paths for methods** - `function='Class.method'` works in Java, TypeScript, Python
+3. **Dotted paths for methods** - `function='Class.method'` works in Java, TypeScript, Python, Rust
 4. **Use `list-functions`** to discover extractable symbols in any supported file
+   (add `--include-tests` to surface items inside Rust `#[cfg(test)]` modules)
 5. **Use `ref=`** to extract code from any git branch, tag, or commit
 6. **Use `root=`** with absolute paths for multi-repo documentation
 """
