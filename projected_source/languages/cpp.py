@@ -10,6 +10,7 @@ import tree_sitter_cpp as tscpp
 from tree_sitter import Language, Node, Query, QueryCursor
 
 from ..core.extractor import BaseExtractor
+from .cpp_ast import find_following_body
 from .cpp_parser import SimpleCppParser
 from .macro_definition_finder import MacroDefinitionFinder
 from .macro_finder import MacroFinder
@@ -138,7 +139,7 @@ class CppExtractor(BaseExtractor):
             # For each node, build an ExtractionResult covering the full function
             # (including body for macro-attributed functions)
             if node.type == "declaration":
-                body_node = self.cpp_parser._find_following_body(node)
+                body_node = find_following_body(node)
                 if body_node:
                     text = source[node.start_byte : body_node.end_byte].decode("utf8")
                     search_node = body_node

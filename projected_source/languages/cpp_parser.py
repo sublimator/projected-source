@@ -1,32 +1,28 @@
 #!/usr/bin/env python3
 """
 Simplified C++ parser using tree-sitter for extracting functions.
+
+Pure AST helpers (name extraction, qualifier matching, node conversion) live
+in ``cpp_ast.py``; this module holds the traversal and the public extraction
+API.
 """
 
 import logging
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import tree_sitter_cpp as tscpp
 from tree_sitter import Language, Node, Parser
 
+from .cpp_ast import (
+    extract_function_name_and_qualifiers,
+    extract_operator_name,
+    extract_qualified_parts,
+    find_following_body,
+    node_to_result,
+    qualifiers_match,
+)
 from .extraction_result import ExtractionResult
 from .utils import node_text
-
-
-def _node_to_result(node: Node, qualified_name: str) -> ExtractionResult:
-    """Helper to create ExtractionResult from a tree-sitter Node."""
-    text = node.text.decode("utf8") if node.text else ""
-    return ExtractionResult(
-        text=text,
-        start_line=node.start_point.row + 1,
-        end_line=node.end_point.row + 1,
-        start_column=node.start_point.column,
-        end_column=node.end_point.column,
-        node=node,
-        node_type=node.type,
-        qualified_name=qualified_name,
-    )
-
 
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
@@ -166,11 +162,11 @@ class SimpleCppParser:
             elif node.type == "declaration" and "function_definition" in node_types:
                 for child in node.children:
                     if child.type == "function_declarator":
-                        found_name, found_qualifiers = self._extract_function_name_and_qualifiers(child, context_stack)
+                        found_name, found_qualifiers = extract_function_name_and_qualifiers(child, context_stack)
                         if found_name == target_leaf_name:
                             if not qualifiers:
                                 return node
-                            elif self._qualifiers_match(found_qualifiers, qualifiers):
+                            elif qualifiers_match(found_qualifiers, qualifiers):
                                 return node
                         break
 
@@ -217,58 +213,6 @@ class SimpleCppParser:
                     logger.debug(f"{indent}  Declarator type: {declarator.type}")
                     found_name = None
                     found_qualifiers = []
-
-                    def extract_operator_name(op_node):
-                        """Extract operator name like 'operator+', 'operator==', 'operator[]'."""
-                        # operator_name contains 'operator' keyword and the symbol(s)
-                        parts = []
-                        for child in op_node.children:
-                            if child.text:
-                                parts.append(node_text(child))
-                        return "".join(parts)
-
-                    def extract_template_type_name(tt_node):
-                        """Extract name from template_type like 'Container<T>'."""
-                        type_id = None
-                        template_args = None
-                        for child in tt_node.children:
-                            if child.type == "type_identifier":
-                                type_id = node_text(child)
-                            elif child.type == "template_argument_list":
-                                template_args = child.text.decode("utf8")
-                        if type_id and template_args:
-                            return f"{type_id}{template_args}"
-                        return type_id
-
-                    def extract_qualified_parts(qnode):
-                        """Recursively extract parts from qualified_identifier.
-
-                        Handles:
-                        - Simple identifiers: MyClass::method
-                        - Template types: Container<T>::method
-                        - Operator names: MyClass::operator+
-                        """
-                        parts = []
-                        current_node = qnode
-                        while current_node and current_node.type == "qualified_identifier":
-                            found_nested = False
-                            for child in current_node.children:
-                                if child.type in ["namespace_identifier", "identifier"]:
-                                    parts.append(node_text(child))
-                                elif child.type == "template_type":
-                                    # Handle Container<T> in Container<T>::method
-                                    parts.append(extract_template_type_name(child))
-                                elif child.type == "operator_name":
-                                    # Handle MyClass::operator+
-                                    parts.append(extract_operator_name(child))
-                                elif child.type == "qualified_identifier":
-                                    # Nested qualified_identifier, continue loop
-                                    current_node = child
-                                    found_nested = True
-                                    break
-                            if not found_nested:
-                                break
-                        return parts
 
                     # Navigate through potential wrapper nodes
                     current = declarator
@@ -350,7 +294,7 @@ class SimpleCppParser:
                         logger.info(f"{indent}  Checking: {found_name} vs {target_leaf_name}")
                         logger.info(f"{indent}  Qualifiers: {found_qualifiers} vs {qualifiers}")
 
-                        def qualifiers_match(found_quals, target_quals):
+                        def strict_qualifiers_match(found_quals, target_quals):
                             """Check if qualifier lists match, handling template types.
 
                             Container<T> matches Container<T> (exact)
@@ -373,13 +317,13 @@ class SimpleCppParser:
                             logger.info(f"{indent}  MATCH FOUND (no qualifiers required)")
                             return node
                         # Otherwise check if qualifiers match (with template handling)
-                        elif qualifiers_match(found_qualifiers, qualifiers):
+                        elif strict_qualifiers_match(found_qualifiers, qualifiers):
                             logger.info(f"{indent}  MATCH FOUND (qualifier match)")
                             return node
                         # Also check if the found qualifiers end with our requested qualifiers
                         elif len(found_qualifiers) >= len(qualifiers):
                             suffix = found_qualifiers[-len(qualifiers) :]
-                            if qualifiers_match(suffix, qualifiers):
+                            if strict_qualifiers_match(suffix, qualifiers):
                                 logger.info(f"{indent}  MATCH FOUND (suffix qualifier match)")
                                 return node
                         logger.info(f"{indent}  No match - qualifiers don't match")
@@ -389,12 +333,12 @@ class SimpleCppParser:
                 # field_declaration can contain a function_declarator for method declarations
                 declarator = node.child_by_field_name("declarator")
                 if declarator and declarator.type == "function_declarator":
-                    found_name, found_qualifiers = self._extract_function_name_and_qualifiers(declarator, context_stack)
+                    found_name, found_qualifiers = extract_function_name_and_qualifiers(declarator, context_stack)
                     if found_name == target_leaf_name:
                         if not qualifiers:
                             logger.info(f"{indent}  MATCH FOUND (no qualifiers required)")
                             return node
-                        elif self._qualifiers_match(found_qualifiers, qualifiers):
+                        elif qualifiers_match(found_qualifiers, qualifiers):
                             logger.info(f"{indent}  MATCH FOUND (qualifier match)")
                             return node
 
@@ -512,19 +456,19 @@ class SimpleCppParser:
             elif node.type == "function_definition" and "function_definition" in node_types:
                 declarator = node.child_by_field_name("declarator")
                 if declarator:
-                    found_name, found_qualifiers = self._extract_function_name_and_qualifiers(declarator, context_stack)
+                    found_name, found_qualifiers = extract_function_name_and_qualifiers(declarator, context_stack)
 
                     if found_name == target_leaf_name:
-                        if self._qualifiers_match(found_qualifiers, qualifiers):
+                        if qualifiers_match(found_qualifiers, qualifiers):
                             results.append(node)
 
             # Check for extern function declarations (declaration with function_declarator)
             elif node.type == "declaration" and "function_definition" in node_types:
                 for child in node.children:
                     if child.type == "function_declarator":
-                        found_name, found_qualifiers = self._extract_function_name_and_qualifiers(child, context_stack)
+                        found_name, found_qualifiers = extract_function_name_and_qualifiers(child, context_stack)
                         if found_name == target_leaf_name:
-                            if self._qualifiers_match(found_qualifiers, qualifiers):
+                            if qualifiers_match(found_qualifiers, qualifiers):
                                 results.append(node)
                         break
 
@@ -533,10 +477,10 @@ class SimpleCppParser:
                 # field_declaration can contain a function_declarator for method declarations
                 declarator = node.child_by_field_name("declarator")
                 if declarator and declarator.type == "function_declarator":
-                    found_name, found_qualifiers = self._extract_function_name_and_qualifiers(declarator, context_stack)
+                    found_name, found_qualifiers = extract_function_name_and_qualifiers(declarator, context_stack)
 
                     if found_name == target_leaf_name:
-                        if self._qualifiers_match(found_qualifiers, qualifiers):
+                        if qualifiers_match(found_qualifiers, qualifiers):
                             results.append(node)
 
             # Check for template declarations
@@ -545,7 +489,7 @@ class SimpleCppParser:
                     if child.type == "function_definition":
                         declarator = child.child_by_field_name("declarator")
                         if declarator:
-                            found_name, found_qualifiers = self._extract_function_name_and_qualifiers(
+                            found_name, found_qualifiers = extract_function_name_and_qualifiers(
                                 declarator, context_stack
                             )
                             # Match base name for template functions (e.g. templateAdd<int> -> templateAdd)
@@ -554,7 +498,7 @@ class SimpleCppParser:
                                 target_leaf_name.split("<")[0] if "<" in target_leaf_name else target_leaf_name
                             )
                             if base_found == base_target or found_name == target_leaf_name:
-                                if self._qualifiers_match(found_qualifiers, qualifiers):
+                                if qualifiers_match(found_qualifiers, qualifiers):
                                     results.append(node)
                     elif child.type in ["class_specifier", "struct_specifier"]:
                         # Template class - recurse into its members with class context
@@ -578,128 +522,6 @@ class SimpleCppParser:
 
         collect_nodes(root)
         return results
-
-    def _extract_function_name_and_qualifiers(
-        self, declarator: Node, context_stack: List[str]
-    ) -> Tuple[str, List[str]]:
-        """Extract function name and qualifiers from a declarator node."""
-        found_name = ""
-        found_qualifiers = []
-
-        def extract_operator_name(op_node):
-            parts = []
-            for child in op_node.children:
-                if child.text:
-                    parts.append(node_text(child))
-            return "".join(parts)
-
-        def extract_qualified_parts(qnode):
-            parts = []
-            current_node = qnode
-            while current_node and current_node.type == "qualified_identifier":
-                found_nested = False
-                for child in current_node.children:
-                    if child.type in ["namespace_identifier", "identifier"]:
-                        parts.append(node_text(child))
-                    elif child.type == "template_type":
-                        # Preserve full template type including args (e.g. Container<T>)
-                        parts.append(node_text(child))
-                    elif child.type == "operator_name":
-                        parts.append(extract_operator_name(child))
-                    elif child.type == "qualified_identifier":
-                        current_node = child
-                        found_nested = True
-                        break
-                if not found_nested:
-                    break
-            return parts
-
-        current: Optional[Node] = declarator
-        while current:
-            if current.type == "function_declarator":
-                name_node = current.child_by_field_name("declarator")
-                if name_node:
-                    if name_node.type == "qualified_identifier":
-                        all_parts = extract_qualified_parts(name_node)
-                        if all_parts:
-                            found_name = all_parts[-1]
-                            found_qualifiers = all_parts[:-1]
-                    elif name_node.type == "template_function":
-                        # Template specialization: templateAdd<int>(...)
-                        found_name = node_text(name_node)
-                        found_qualifiers = context_stack
-                    elif name_node.type == "identifier":
-                        found_name = node_text(name_node)
-                        found_qualifiers = context_stack
-                    elif name_node.type == "field_identifier":
-                        found_name = node_text(name_node)
-                        found_qualifiers = context_stack
-                    elif name_node.type == "operator_name":
-                        found_name = extract_operator_name(name_node)
-                        found_qualifiers = context_stack
-                break
-            elif current.type == "pointer_declarator":
-                current = current.child_by_field_name("declarator")
-            elif current.type == "reference_declarator":
-                func_decl = None
-                for child in current.children:
-                    if child.type == "function_declarator":
-                        func_decl = child
-                        break
-                current = func_decl
-            else:
-                break
-
-        return found_name, found_qualifiers
-
-    @staticmethod
-    def _qualifier_base(q: str) -> str:
-        """Strip template args from a qualifier: 'Container<T>' -> 'Container'."""
-        idx = q.find("<")
-        return q[:idx] if idx >= 0 else q
-
-    @staticmethod
-    def _find_following_body(decl_node: Node) -> Optional[Node]:
-        """Find a compound_statement following a declaration node.
-
-        Handles the pattern where tree-sitter splits a macro-attributed function:
-            declaration ; expression_statement ; compound_statement
-        Returns the compound_statement if found within a few siblings.
-        """
-        parent = decl_node.parent
-        if not parent:
-            return None
-
-        found_decl = False
-        siblings_after = 0
-        for child in parent.children:
-            if found_decl:
-                siblings_after += 1
-                if child.type == "compound_statement":
-                    return child
-                # Allow skipping expression_statement (attribute macros) and
-                # other noise, but don't look too far
-                if siblings_after > 3:
-                    break
-            elif child.id == decl_node.id:
-                found_decl = True
-
-        return None
-
-    def _qualifiers_match(self, found: List[str], target: List[str]) -> bool:
-        """Check if qualifier lists match (template args are compared flexibly)."""
-        if not target:
-            return True
-        if found == target:
-            return True
-        if len(found) >= len(target) and found[-len(target) :] == target:
-            return True
-        # Compare stripping template args from both sides
-        if len(found) >= len(target):
-            found_tail = found[-len(target) :]
-            if all(self._qualifier_base(f) == self._qualifier_base(t) for f, t in zip(found_tail, target)):
-                return True
-        return False
 
     def _extract_parameter_signature(self, node: Node) -> str:
         """
@@ -820,13 +642,13 @@ class SimpleCppParser:
 
         # Return the first (best) match
         if nodes and nodes[0].type in ("function_definition", "template_declaration"):
-            return _node_to_result(nodes[0], function_name)
+            return node_to_result(nodes[0], function_name)
 
         # Handle macro-attributed functions where tree-sitter splits the signature
         # and body into: declaration + expression_statement + compound_statement
         for node in nodes:
             if node.type == "declaration":
-                body_node = self._find_following_body(node)
+                body_node = find_following_body(node)
                 if body_node:
                     # Combine declaration and body into a single result
                     text = source_code[node.start_byte : body_node.end_byte].decode("utf8")
@@ -842,7 +664,7 @@ class SimpleCppParser:
                     )
 
         # Fall back to declaration (e.g., header-only code, extern declarations)
-        return _node_to_result(nodes[0], function_name)
+        return node_to_result(nodes[0], function_name)
 
     def extract_struct_or_class_by_name(self, source_code: bytes, name: str) -> Optional[ExtractionResult]:
         """
@@ -864,7 +686,7 @@ class SimpleCppParser:
         node = self._find_node_by_qualified_name(
             source_code, name, ["class_specifier", "struct_specifier", "enum_specifier", "declaration"]
         )
-        return _node_to_result(node, name) if node else None
+        return node_to_result(node, name) if node else None
 
     def list_symbols(self, source_code: bytes) -> List[dict]:
         """
@@ -955,7 +777,7 @@ class SimpleCppParser:
             if node.type == "function_definition":
                 declarator = node.child_by_field_name("declarator")
                 if declarator:
-                    name, qualifiers = self._extract_function_name_and_qualifiers(declarator, context_stack)
+                    name, qualifiers = extract_function_name_and_qualifiers(declarator, context_stack)
                     if name:
                         qualified = "::".join(qualifiers + [name]) if qualifiers else name
                         sig = self._extract_parameter_signature(node)
@@ -973,7 +795,7 @@ class SimpleCppParser:
             if node.type == "field_declaration":
                 declarator = node.child_by_field_name("declarator")
                 if declarator and declarator.type == "function_declarator":
-                    name, qualifiers = self._extract_function_name_and_qualifiers(declarator, context_stack)
+                    name, qualifiers = extract_function_name_and_qualifiers(declarator, context_stack)
                     if name:
                         qualified = "::".join(qualifiers + [name]) if qualifiers else name
                         sig = self._extract_parameter_signature(node)
@@ -998,7 +820,7 @@ class SimpleCppParser:
                     if child.type == "function_definition":
                         declarator = child.child_by_field_name("declarator")
                         if declarator:
-                            name, qualifiers = self._extract_function_name_and_qualifiers(declarator, context_stack)
+                            name, qualifiers = extract_function_name_and_qualifiers(declarator, context_stack)
                             if name:
                                 qualified = "::".join(qualifiers + [name]) if qualifiers else name
                                 sig = self._extract_parameter_signature(node)
@@ -1021,7 +843,7 @@ class SimpleCppParser:
                 # Check for extern/forward function declarations (function_declarator child)
                 for child in node.children:
                     if child.type == "function_declarator":
-                        name, qualifiers = self._extract_function_name_and_qualifiers(child, context_stack)
+                        name, qualifiers = extract_function_name_and_qualifiers(child, context_stack)
                         if name:
                             qualified = "::".join(qualifiers + [name]) if qualifiers else name
                             sig = self._extract_parameter_signature(node)
@@ -1068,216 +890,3 @@ class SimpleCppParser:
 
         collect(root)
         return symbols
-
-
-if __name__ == "__main__":
-    import sys
-
-    # Enable debug logging if --debug flag is passed
-    if "--debug" in sys.argv:
-        logger.setLevel(logging.DEBUG)
-        # Also set root logger to see tree-sitter debug info
-        logging.getLogger().setLevel(logging.DEBUG)
-    elif "--info" in sys.argv:
-        logger.setLevel(logging.INFO)
-
-    # Test the parser
-    parser = SimpleCppParser()
-
-    test_code = b"""
-    inline std::optional<std::vector<uint8_t>>
-    FromJSIntArrayOrHexString(JSContext* ctx, JSValueConst v, int max_len)
-    {
-        return {};
-    }
-    
-    static JSValue js_process_binary(JSContext *ctx, JSValueConst this_val,
-                                     int argc, JSValueConst *argv) 
-    {
-        return JS_UNDEFINED;
-    }
-    
-    class MyClass {
-    public:
-        void myMethod() {
-            // Do something
-        }
-        
-        int calculate(int x, int y) {
-            return x + y;
-        }
-    };
-    
-    struct MyStruct {
-        void structMethod() {
-            // Struct method
-        }
-    };
-    
-    // Out-of-line definition
-    void MyClass::anotherMethod() {
-        // Out-of-line implementation
-    }
-    
-    namespace utils {
-        void helperFunction() {
-            // Namespace function
-        }
-        
-        class Helper {
-        public:
-            void process() {
-                // Method in namespace class
-            }
-        };
-        
-        struct Data {
-            void validate() {
-                // Struct method in namespace
-            }
-        };
-    }
-    
-    // Out-of-line namespace class method
-    void utils::Helper::cleanup() {
-        // Out-of-line namespace class method
-    }
-    
-    namespace outer {
-        namespace inner {
-            void deepFunction() {
-                // Nested namespace function
-            }
-        }
-    }
-    
-    // Nested struct/class cases
-    struct OuterStruct {
-        struct InnerStruct {
-            void nestedMethod() {
-                // Method in struct in struct
-            }
-        };
-        
-        class InnerClass {
-        public:
-            void anotherNested() {
-                // Method in class in struct
-            }
-        };
-    };
-    
-    class OuterClass {
-    public:
-        struct InnerStruct {
-            void methodInStructInClass() {
-                // Method in struct in class
-            }
-        };
-    };
-    
-    // Out-of-line nested struct method
-    void OuterStruct::InnerStruct::outOfLineNested() {
-        // Out-of-line nested struct method
-    }
-    """
-
-    # Test regular functions
-    result = parser.extract_function_by_name(test_code, "FromJSIntArrayOrHexString")
-    if result:
-        print("Found FromJSIntArrayOrHexString:")
-        print(result)
-        print()
-
-    # Test class methods
-    result = parser.extract_function_by_name(test_code, "MyClass::calculate")
-    if result:
-        print("Found MyClass::calculate:")
-        print(result)
-        print()
-    else:
-        print("NOT FOUND: MyClass::calculate")
-
-    # Test struct methods
-    result = parser.extract_function_by_name(test_code, "MyStruct::structMethod")
-    if result:
-        print("Found MyStruct::structMethod:")
-        print(result)
-        print()
-
-    # Test out-of-line definitions
-    result = parser.extract_function_by_name(test_code, "MyClass::anotherMethod")
-    if result:
-        print("Found MyClass::anotherMethod (out-of-line):")
-        print(result)
-        print()
-
-    # Test namespace functions
-    result = parser.extract_function_by_name(test_code, "utils::helperFunction")
-    if result:
-        print("Found utils::helperFunction:")
-        print(result)
-        print()
-
-    # Test namespace class methods
-    result = parser.extract_function_by_name(test_code, "utils::Helper::process")
-    if result:
-        print("Found utils::Helper::process:")
-        print(result)
-        print()
-
-    # Test namespace struct methods
-    result = parser.extract_function_by_name(test_code, "utils::Data::validate")
-    if result:
-        print("Found utils::Data::validate:")
-        print(result)
-        print()
-
-    # Test out-of-line namespace class method
-    result = parser.extract_function_by_name(test_code, "utils::Helper::cleanup")
-    if result:
-        print("Found utils::Helper::cleanup (out-of-line):")
-        print(result)
-        print()
-
-    # Test nested namespace function
-    result = parser.extract_function_by_name(test_code, "outer::inner::deepFunction")
-    if result:
-        print("Found outer::inner::deepFunction:")
-        print(result)
-        print()
-
-    # Test nested struct methods
-    print("\n--- Testing nested struct/class methods ---")
-
-    result = parser.extract_function_by_name(test_code, "OuterStruct::InnerStruct::nestedMethod")
-    if result:
-        print("Found OuterStruct::InnerStruct::nestedMethod:")
-        print(result)
-        print()
-    else:
-        print("NOT FOUND: OuterStruct::InnerStruct::nestedMethod\n")
-
-    result = parser.extract_function_by_name(test_code, "OuterStruct::InnerClass::anotherNested")
-    if result:
-        print("Found OuterStruct::InnerClass::anotherNested:")
-        print(result)
-        print()
-    else:
-        print("NOT FOUND: OuterStruct::InnerClass::anotherNested\n")
-
-    result = parser.extract_function_by_name(test_code, "OuterClass::InnerStruct::methodInStructInClass")
-    if result:
-        print("Found OuterClass::InnerStruct::methodInStructInClass:")
-        print(result)
-        print()
-    else:
-        print("NOT FOUND: OuterClass::InnerStruct::methodInStructInClass\n")
-
-    result = parser.extract_function_by_name(test_code, "OuterStruct::InnerStruct::outOfLineNested")
-    if result:
-        print("Found OuterStruct::InnerStruct::outOfLineNested (out-of-line):")
-        print(result)
-        print()
-    else:
-        print("NOT FOUND: OuterStruct::InnerStruct::outOfLineNested\n")
