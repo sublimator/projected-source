@@ -1,14 +1,14 @@
 <!--
 rendered_from: system-overview.md.j2
-rendered_at: 2026-06-23T02:05:18Z
+rendered_at: 2026-06-23T05:30:14Z
 branch: main
-commit: 68bf0b6
-commit_message: docs(ai-guide): document lean code() examples and marker syntax
+commit: 1a63693
+commit_message: test: replace tautology + non-detecting regression assertions
 -->
 
 ---
 
-<sub>Last updated: 2026-06-23 | branch: main | commit: 68bf0b6 (docs(ai-guide): document lean code() examples and marker syntax)</sub>
+<sub>Last updated: 2026-06-23 | branch: main | commit: 1a63693 (test: replace tautology + non-detecting regression assertions)</sub>
 
 ---
 
@@ -33,7 +33,7 @@ Before diving into how extraction works, let's look at the types that flow throu
 
 Every time code is extracted from a source file — whether a function, struct, or marker region — the result is packaged as an `ExtractionResult`. This dataclass carries the extracted text along with precise location metadata:
 
-📍 [`projected_source/languages/extraction_result.py:9-36`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/languages/extraction_result.py#L9-L36)
+📍 [`projected_source/languages/extraction_result.py:9-36`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/languages/extraction_result.py#L9-L36)
 ```python
    9 @dataclass
   10 class ExtractionResult:
@@ -71,7 +71,7 @@ The `to_tuple()` method exists for backwards compatibility — most of the extra
 
 When validating that documentation covers code changes, individual changed regions are represented as `ChangeRegion` — a simple dataclass tying a file path to a line range:
 
-📍 [`projected_source/core/changes_set.py:15-24`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/changes_set.py#L15-L24)
+📍 [`projected_source/core/changes_set.py:15-24`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/changes_set.py#L15-L24)
 ```python
   15 @dataclass
   16 class ChangeRegion:
@@ -91,7 +91,7 @@ When validating that documentation covers code changes, individual changed regio
 
 The system supports multiple languages through a simple registry pattern. Each file extension maps to an extractor class:
 
-📍 [`projected_source/languages/__init__.py:19-41`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/languages/__init__.py#L19-L41)
+📍 [`projected_source/languages/__init__.py:19-41`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/languages/__init__.py#L19-L41)
 ```python
   19 EXTRACTORS = {
   20     ".cpp": CppExtractor,
@@ -120,7 +120,7 @@ The system supports multiple languages through a simple registry pattern. Each f
 
 When a `code()` call needs to extract from a file, it calls `get_extractor()` which looks up the right class by file extension and instantiates it:
 
-📍 [`projected_source/languages/__init__.py:44-66`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/languages/__init__.py#L44-L66)
+📍 [`projected_source/languages/__init__.py:44-66`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/languages/__init__.py#L44-L66)
 ```python
   44 def get_extractor(file_path: Path):
   45     """
@@ -151,7 +151,7 @@ When a `code()` call needs to extract from a file, it calls `get_extractor()` wh
 
 All language extractors inherit from `BaseExtractor`, which provides the tree-sitter parser setup, line extraction, and the marker system. The marker system lets you tag regions of source code with `//@@start name` and `//@@end name` comments, then extract just that region:
 
-📍 [`projected_source/core/extractor.py:17-134`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/extractor.py#L17-L134)
+📍 [`projected_source/core/extractor.py:17-134`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/extractor.py#L17-L134)
 ```python
   17 class BaseExtractor:
   18     """Base class for language-specific extractors."""
@@ -184,7 +184,7 @@ All language extractors inherit from `BaseExtractor`, which provides the tree-si
   45         end = min(len(lines), end_line)
   46 
   47         code_lines = lines[start:end]
-  48         return "\n".join(code_lines), start_line, end_line
+  48         return "\n".join(code_lines), max(1, start_line), min(len(lines), end_line)
   49 
   50     def find_markers_in_node(self, node: Node) -> Dict[str, Tuple[int, int]]:
   51         """
@@ -287,334 +287,342 @@ The `TemplateRenderer` is the heart of the system. It creates a Jinja2 environme
 
 When a renderer is created, it sets up the Jinja2 environment with the template directory as the loader root, and registers the extraction functions as globals:
 
-📍 [`projected_source/core/renderer.py:74-114`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/renderer.py#L74-L114)
+📍 [`projected_source/core/renderer.py:75-115`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/renderer.py#L75-L115)
 ```python
-  74     def __init__(
-  75         self,
-  76         template_dir: Path = None,
-  77         repo_path: Path = None,
-  78         remap_dirty_lines: bool = False,
-  79         changes_set: "ChangesSet" = None,
-  80     ):
-  81         """
-  82         Initialize the renderer.
-  83 
-  84         Args:
-  85             template_dir: Directory containing templates (default: current dir)
-  86             repo_path: Repository root path (default: current dir)
-  87             remap_dirty_lines: If True, remap line numbers in dirty files to match
-  88                                committed version (for sharing). Affects permalinks
-  89                                and code block line numbers.
-  90             changes_set: Optional ChangesSet for tracking documentation coverage.
-  91                          When provided, each code() call will mark its region as
-  92                          covered. Check changes_set.uncovered() after rendering.
-  93         """
-  94         self.template_dir = template_dir or Path.cwd()
-  95         self.repo_path = repo_path or Path.cwd()
-  96         self.remap_dirty_lines = remap_dirty_lines
-  97         self.changes_set = changes_set
-  98         self.github = GitHubIntegration(self.repo_path)
-  99 
- 100         # Create Jinja2 environment
- 101         self.env = jinja2.Environment(
- 102             loader=jinja2.FileSystemLoader(str(self.template_dir)),
- 103             trim_blocks=True,
- 104             lstrip_blocks=True,
- 105             extensions=[CodeContextExtension],
- 106         )
- 107 
- 108         # Register custom functions
- 109         self.env.globals["code"] = self._code_function
- 110         self.env.globals["ghc"] = self._code_function  # Alias for compatibility
- 111         self.env.globals["ignore_changes"] = self._ignore_changes_function
- 112         self.env.globals["include"] = self._include_function
- 113         self.env.globals["set_code_context"] = self._set_code_context_function
- 114         self.env.globals["set_code_root"] = self._set_code_root_function
+  75     def __init__(
+  76         self,
+  77         template_dir: Path = None,
+  78         repo_path: Path = None,
+  79         remap_dirty_lines: bool = False,
+  80         changes_set: "ChangesSet" = None,
+  81     ):
+  82         """
+  83         Initialize the renderer.
+  84 
+  85         Args:
+  86             template_dir: Directory containing templates (default: current dir)
+  87             repo_path: Repository root path (default: current dir)
+  88             remap_dirty_lines: If True, remap line numbers in dirty files to match
+  89                                committed version (for sharing). Affects permalinks
+  90                                and code block line numbers.
+  91             changes_set: Optional ChangesSet for tracking documentation coverage.
+  92                          When provided, each code() call will mark its region as
+  93                          covered. Check changes_set.uncovered() after rendering.
+  94         """
+  95         self.template_dir = template_dir or Path.cwd()
+  96         self.repo_path = repo_path or Path.cwd()
+  97         self.remap_dirty_lines = remap_dirty_lines
+  98         self.changes_set = changes_set
+  99         self.github = GitHubIntegration(self.repo_path)
+ 100 
+ 101         # Create Jinja2 environment
+ 102         self.env = jinja2.Environment(
+ 103             loader=jinja2.FileSystemLoader(str(self.template_dir)),
+ 104             trim_blocks=True,
+ 105             lstrip_blocks=True,
+ 106             extensions=[CodeContextExtension],
+ 107         )
+ 108 
+ 109         # Register custom functions
+ 110         self.env.globals["code"] = self._code_function
+ 111         self.env.globals["ghc"] = self._code_function  # Alias for compatibility
+ 112         self.env.globals["ignore_changes"] = self._ignore_changes_function
+ 113         self.env.globals["include"] = self._include_function
+ 114         self.env.globals["set_code_context"] = self._set_code_context_function
+ 115         self.env.globals["set_code_root"] = self._set_code_root_function
 ```
 
 ### The code() Function
 
 This is the workhorse. Every `{{ code('file.cpp', function='foo') }}` call in a template invokes `_code_function`. It resolves the file path, picks the right extractor, extracts the requested symbol, optionally generates a GitHub permalink, adds line numbers, and returns formatted markdown:
 
-📍 [`projected_source/core/renderer.py:119-395`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/renderer.py#L119-L395)
+📍 [`projected_source/core/renderer.py:120-404`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/renderer.py#L120-L404)
 ```python
- 119     def _code_function(
- 120         self,
- 121         file_path: str,
- 122         function: str = None,
- 123         struct: str = None,
- 124         var: str = None,
- 125         function_macro: Union[str, Dict] = None,
- 126         macro_definition: str = None,
- 127         lines: Tuple[int, int] = None,
- 128         marker: str = None,
- 129         signature: str = None,
- 130         message: str = None,
- 131         enum: str = None,
- 132         service: str = None,
- 133         github: bool = True,
- 134         blame: bool = False,
- 135         line_numbers: bool = True,
- 136         language: str = None,
- 137         ref: str = None,
- 138         root: str = None,
- 139     ) -> str:
- 140         """
- 141         Universal code extraction function for templates.
- 142 
- 143         Args:
- 144             file_path: Path to the source file
- 145             function: Function name to extract
- 146             struct: Struct/class/enum name to extract (C/C++)
- 147             var: Variable/constant declaration to extract (C/C++)
- 148             function_macro: Macro that defines a function (dict with 'name' and optional 'arg0', 'arg1', etc)
- 149             macro_definition: Macro definition name to extract (#define statement)
- 150             lines: Tuple of (start_line, end_line) to extract
- 151             marker: Marker name to extract between //@@start and //@@end
- 152             signature: String to match against parameter types for overload disambiguation.
- 153                        Use partial type names like "TMProposeSet" to select a specific overload.
- 154             message: Message name to extract (protobuf)
- 155             enum: Enum name to extract (protobuf)
- 156             service: Service name to extract (protobuf)
- 157             github: Include GitHub permalink (default: True)
- 158             blame: Include git blame info (default: False)
- 159             line_numbers: Show line numbers (default: True)
- 160             language: Language for syntax highlighting (auto-detected if None)
- 161 
- 162         Returns:
- 163             Formatted markdown with code block
- 164 
- 165         Examples in templates:
- 166             {{ code('src/file.cpp', function='myFunc') }}
- 167             {{ code('src/file.cpp', function='onMessage', signature='TMProposeSet') }}
- 168             {{ code('src/file.cpp', struct='MyClass') }}
- 169             {{ code('src/file.cpp', var='errorInfos') }}
- 170             {{ code('src/file.cpp', lines=(10, 20)) }}
- 171             {{ code('src/file.cpp', marker='example1') }}
- 172             {{ code('src/proto/file.proto', message='MyMessage') }}
- 173             {{ code('src/proto/file.proto', enum='MyEnum') }}
- 174         """
- 175         tmp_file = None
- 176         try:
- 177             # Apply root prefix: per-call root= overrides context code_root
- 178             code_root = root or str(self.env.globals.get("code_root", ""))
- 179             if code_root and not Path(file_path).is_absolute():
- 180                 file_path = str(Path(code_root) / file_path)
- 181 
- 182             # Determine active ref (per-call overrides context)
- 183             active_ref = ref or str(self.env.globals.get("code_ref", ""))
- 184 
- 185             # Resolve file path relative to repo
- 186             resolved_path = Path(file_path)
- 187             if not resolved_path.is_absolute():
- 188                 resolved_path = self.repo_path / resolved_path
- 189 
- 190             # If a git ref is active, fetch file content from that ref
- 191             if active_ref:
- 192                 rel_path = file_path
- 193                 # Ensure relative path for git show
- 194                 try:
- 195                     rel_path = str(Path(file_path).relative_to(self.repo_path))
- 196                 except ValueError:
- 197                     # Already relative
- 198                     rel_path = file_path
- 199                 content = subprocess.check_output(
- 200                     ["git", "show", f"{active_ref}:{rel_path}"],
- 201                     cwd=self.repo_path,
- 202                     stderr=subprocess.DEVNULL,
- 203                 )
- 204                 tmp_file = Path(tempfile.mktemp(suffix=resolved_path.suffix))
- 205                 tmp_file.write_bytes(content)
- 206                 resolved_path = tmp_file
- 207 
- 208             # Get the appropriate extractor
- 209             extractor = get_extractor(resolved_path)
- 210 
- 211             # Extract code based on parameters
- 212             if function:
- 213                 # Check if we also have a marker - extract marker within function
- 214                 if marker:
- 215                     if hasattr(extractor, "extract_function_marker"):
- 216                         code_text, start_line, end_line = extractor.extract_function_marker(
- 217                             resolved_path, function, marker
- 218                         )
- 219                         logger.info(f"Extracted marker '{marker}' from function '{function}' in {file_path}")
- 220                     else:
- 221                         return "❌ **ERROR**: Function marker extraction not supported for this file type"
- 222                 else:
- 223                     code_text, start_line, end_line = extractor.extract_function(resolved_path, function, signature)
- 224                     logger.info(f"Extracted function '{function}' from {file_path}")
- 225             elif function_macro:
- 226                 # Handle function_macro parameter
- 227                 if isinstance(function_macro, str):
- 228                     # Simple string -> convert to dict
- 229                     macro_spec = {"name": function_macro}
- 230                 else:
- 231                     macro_spec = function_macro
- 232 
- 233                 # Check if we also have a marker - extract marker within macro
- 234                 if marker:
- 235                     code_text, start_line, end_line = extractor.extract_function_macro_marker(
- 236                         resolved_path, macro_spec, marker
- 237                     )
- 238                     logger.info(f"Extracted marker '{marker}' from function_macro '{macro_spec}' in {file_path}")
- 239                 else:
- 240                     code_text, start_line, end_line = extractor.extract_function_macro(resolved_path, macro_spec)
- 241                     logger.info(f"Extracted function_macro '{macro_spec}' from {file_path}")
- 242             elif macro_definition:
- 243                 code_text, start_line, end_line = extractor.extract_macro_definition(resolved_path, macro_definition)
- 244                 logger.info(f"Extracted macro_definition '{macro_definition}' from {file_path}")
- 245             elif var:
- 246                 # Extract variable/constant declaration
- 247                 if hasattr(extractor, "extract_variable"):
- 248                     code_text, start_line, end_line = extractor.extract_variable(resolved_path, var)
- 249                     logger.info(f"Extracted variable '{var}' from {file_path}")
- 250                 elif hasattr(extractor, "extract_struct"):
- 251                     # C/C++ uses extract_struct for var= (finds declarations)
- 252                     if marker:
- 253                         if hasattr(extractor, "extract_struct_marker"):
- 254                             code_text, start_line, end_line = extractor.extract_struct_marker(
- 255                                 resolved_path, var, marker
- 256                             )
- 257                             logger.info(f"Extracted marker '{marker}' from variable '{var}' in {file_path}")
- 258                         else:
- 259                             return "❌ **ERROR**: Marker extraction in variable not supported"
- 260                     else:
- 261                         code_text, start_line, end_line = extractor.extract_struct(resolved_path, var)
- 262                         logger.info(f"Extracted variable '{var}' from {file_path}")
- 263                 else:
- 264                     return "❌ **ERROR**: Variable extraction not supported for this file type"
- 265             elif struct:
- 266                 # Extract struct/class/enum definition
- 267                 if hasattr(extractor, "extract_struct"):
- 268                     if marker:
- 269                         if hasattr(extractor, "extract_struct_marker"):
- 270                             code_text, start_line, end_line = extractor.extract_struct_marker(
- 271                                 resolved_path, struct, marker
- 272                             )
- 273                             logger.info(f"Extracted marker '{marker}' from struct '{struct}' in {file_path}")
- 274                         else:
- 275                             return "❌ **ERROR**: Marker extraction in struct not supported"
- 276                     else:
- 277                         code_text, start_line, end_line = extractor.extract_struct(resolved_path, struct)
- 278                         logger.info(f"Extracted struct/class '{struct}' from {file_path}")
- 279                 else:
- 280                     return "❌ **ERROR**: Struct/class extraction not supported for this file type"
- 281             elif message:
- 282                 # Extract protobuf message
- 283                 if hasattr(extractor, "extract_message"):
- 284                     if marker:
- 285                         code_text, start_line, end_line = extractor.extract_message_marker(
- 286                             resolved_path, message, marker
- 287                         )
- 288                         logger.info(f"Extracted marker '{marker}' from message '{message}' in {file_path}")
- 289                     else:
- 290                         code_text, start_line, end_line = extractor.extract_message(resolved_path, message)
- 291                         logger.info(f"Extracted message '{message}' from {file_path}")
- 292                 else:
- 293                     return "❌ **ERROR**: Message extraction not supported for this file type"
- 294             elif enum:
- 295                 # Extract protobuf enum
- 296                 if hasattr(extractor, "extract_enum"):
- 297                     code_text, start_line, end_line = extractor.extract_enum(resolved_path, enum)
- 298                     logger.info(f"Extracted enum '{enum}' from {file_path}")
- 299                 else:
- 300                     return "❌ **ERROR**: Enum extraction not supported for this file type"
- 301             elif service:
- 302                 # Extract protobuf service
- 303                 if hasattr(extractor, "extract_service"):
- 304                     code_text, start_line, end_line = extractor.extract_service(resolved_path, service)
- 305                     logger.info(f"Extracted service '{service}' from {file_path}")
- 306                 else:
- 307                     return "❌ **ERROR**: Service extraction not supported for this file type"
- 308             elif marker:
- 309                 code_text, start_line, end_line = extractor.extract_marker(resolved_path, marker)
- 310                 logger.info(f"Extracted marker '{marker}' from {file_path}")
- 311             elif lines:
- 312                 start_line, end_line = lines
- 313                 code_text, start_line, end_line = extractor.extract_lines(resolved_path, start_line, end_line)
- 314                 logger.info(f"Extracted lines {start_line}-{end_line} from {file_path}")
- 315             else:
- 316                 return (
- 317                     f"❌ **ERROR**: Must specify function, struct, var, function_macro, "
- 318                     f"macro_definition, lines, or marker for {file_path}"
- 319                 )
- 320 
- 321             # Use original file path for display (not temp file)
- 322             display_path = self.repo_path / file_path if not Path(file_path).is_absolute() else Path(file_path)
- 323 
- 324             # Track this region as covered if we have a ChangesSet
- 325             if self.changes_set is not None and not active_ref:
- 326                 self.changes_set.subtract(display_path, start_line, end_line)
- 327 
- 328             # Remap line numbers if requested (for sharing docs from dirty files)
- 329             display_start = start_line
- 330             display_end = end_line
- 331             if self.remap_dirty_lines and not active_ref:
- 332                 display_start = self.github.map_to_committed_line(display_path, start_line)
- 333                 display_end = self.github.map_to_committed_line(display_path, end_line)
- 334 
- 335             # Build header with GitHub permalink if requested
- 336             if github and not active_ref:
- 337                 header = self.github.get_permalink(
- 338                     display_path, start_line, end_line, display_committed_lines=self.remap_dirty_lines
- 339                 )
- 340             else:
- 341                 display_rel = display_path.relative_to(self.repo_path) if display_path.is_absolute() else display_path
- 342                 ref_suffix = f" @ {active_ref}" if active_ref else ""
- 343                 if display_start == display_end:
- 344                     header = f"📍 `{display_rel}:{display_start}{ref_suffix}`"
- 345                 else:
- 346                     header = f"📍 `{display_rel}:{display_start}-{display_end}{ref_suffix}`"
- 347 
- 348             # Format code with line numbers and/or blame
- 349             # Use remapped line numbers for display if remap_dirty_lines is enabled
- 350             code_start_line = display_start if self.remap_dirty_lines else start_line
- 351             if blame and not active_ref:
- 352                 code_text = self.github.format_with_blame(code_text, code_start_line, display_path)
- 353             elif line_numbers:
- 354                 code_text = self._add_line_numbers(code_text, code_start_line)
+ 120     def _code_function(
+ 121         self,
+ 122         file_path: str,
+ 123         function: str = None,
+ 124         struct: str = None,
+ 125         var: str = None,
+ 126         function_macro: Union[str, Dict] = None,
+ 127         macro_definition: str = None,
+ 128         lines: Tuple[int, int] = None,
+ 129         marker: str = None,
+ 130         signature: str = None,
+ 131         message: str = None,
+ 132         enum: str = None,
+ 133         service: str = None,
+ 134         github: bool = True,
+ 135         blame: bool = False,
+ 136         line_numbers: bool = True,
+ 137         language: str = None,
+ 138         ref: str = None,
+ 139         root: str = None,
+ 140     ) -> str:
+ 141         """
+ 142         Universal code extraction function for templates.
+ 143 
+ 144         Args:
+ 145             file_path: Path to the source file
+ 146             function: Function name to extract
+ 147             struct: Struct/class/enum name to extract (C/C++)
+ 148             var: Variable/constant declaration to extract (C/C++)
+ 149             function_macro: Macro that defines a function (dict with 'name' and optional 'arg0', 'arg1', etc)
+ 150             macro_definition: Macro definition name to extract (#define statement)
+ 151             lines: Tuple of (start_line, end_line) to extract
+ 152             marker: Marker name to extract between //@@start and //@@end
+ 153             signature: String to match against parameter types for overload disambiguation.
+ 154                        Use partial type names like "TMProposeSet" to select a specific overload.
+ 155             message: Message name to extract (protobuf)
+ 156             enum: Enum name to extract (protobuf)
+ 157             service: Service name to extract (protobuf)
+ 158             github: Include GitHub permalink (default: True)
+ 159             blame: Include git blame info (default: False)
+ 160             line_numbers: Show line numbers (default: True)
+ 161             language: Language for syntax highlighting (auto-detected if None)
+ 162 
+ 163         Returns:
+ 164             Formatted markdown with code block
+ 165 
+ 166         Examples in templates:
+ 167             {{ code('src/file.cpp', function='myFunc') }}
+ 168             {{ code('src/file.cpp', function='onMessage', signature='TMProposeSet') }}
+ 169             {{ code('src/file.cpp', struct='MyClass') }}
+ 170             {{ code('src/file.cpp', var='errorInfos') }}
+ 171             {{ code('src/file.cpp', lines=(10, 20)) }}
+ 172             {{ code('src/file.cpp', marker='example1') }}
+ 173             {{ code('src/proto/file.proto', message='MyMessage') }}
+ 174             {{ code('src/proto/file.proto', enum='MyEnum') }}
+ 175         """
+ 176         tmp_file = None
+ 177         resolved_path: Optional[Path] = None
+ 178         try:
+ 179             # Apply root prefix: per-call root= overrides context code_root
+ 180             code_root = root or str(self.env.globals.get("code_root", ""))
+ 181             if code_root and not Path(file_path).is_absolute():
+ 182                 file_path = str(Path(code_root) / file_path)
+ 183 
+ 184             # Determine active ref (per-call overrides context)
+ 185             active_ref = ref or str(self.env.globals.get("code_ref", ""))
+ 186 
+ 187             # Resolve file path relative to repo
+ 188             resolved_path = Path(file_path)
+ 189             if not resolved_path.is_absolute():
+ 190                 resolved_path = self.repo_path / resolved_path
+ 191 
+ 192             # If a git ref is active, fetch file content from that ref
+ 193             if active_ref:
+ 194                 rel_path = file_path
+ 195                 # Ensure relative path for git show
+ 196                 try:
+ 197                     rel_path = str(Path(file_path).relative_to(self.repo_path))
+ 198                 except ValueError:
+ 199                     # Already relative
+ 200                     rel_path = file_path
+ 201                 content = subprocess.check_output(
+ 202                     ["git", "show", f"{active_ref}:{rel_path}"],
+ 203                     cwd=self.repo_path,
+ 204                     stderr=subprocess.DEVNULL,
+ 205                 )
+ 206                 tmp_file = Path(tempfile.mktemp(suffix=resolved_path.suffix))
+ 207                 tmp_file.write_bytes(content)
+ 208                 resolved_path = tmp_file
+ 209 
+ 210             # Get the appropriate extractor
+ 211             extractor = get_extractor(resolved_path)
+ 212 
+ 213             # Extract code based on parameters
+ 214             if function:
+ 215                 # Check if we also have a marker - extract marker within function
+ 216                 if marker:
+ 217                     if hasattr(extractor, "extract_function_marker"):
+ 218                         code_text, start_line, end_line = extractor.extract_function_marker(
+ 219                             resolved_path, function, marker
+ 220                         )
+ 221                         logger.info(f"Extracted marker '{marker}' from function '{function}' in {file_path}")
+ 222                     else:
+ 223                         return "❌ **ERROR**: Function marker extraction not supported for this file type"
+ 224                 else:
+ 225                     code_text, start_line, end_line = extractor.extract_function(resolved_path, function, signature)
+ 226                     logger.info(f"Extracted function '{function}' from {file_path}")
+ 227             elif function_macro:
+ 228                 # Handle function_macro parameter
+ 229                 if isinstance(function_macro, str):
+ 230                     # Simple string -> convert to dict
+ 231                     macro_spec = {"name": function_macro}
+ 232                 else:
+ 233                     macro_spec = function_macro
+ 234 
+ 235                 # Check if we also have a marker - extract marker within macro
+ 236                 if marker:
+ 237                     code_text, start_line, end_line = extractor.extract_function_macro_marker(
+ 238                         resolved_path, macro_spec, marker
+ 239                     )
+ 240                     logger.info(f"Extracted marker '{marker}' from function_macro '{macro_spec}' in {file_path}")
+ 241                 else:
+ 242                     code_text, start_line, end_line = extractor.extract_function_macro(resolved_path, macro_spec)
+ 243                     logger.info(f"Extracted function_macro '{macro_spec}' from {file_path}")
+ 244             elif macro_definition:
+ 245                 code_text, start_line, end_line = extractor.extract_macro_definition(resolved_path, macro_definition)
+ 246                 logger.info(f"Extracted macro_definition '{macro_definition}' from {file_path}")
+ 247             elif var:
+ 248                 # Extract variable/constant declaration
+ 249                 if hasattr(extractor, "extract_variable"):
+ 250                     code_text, start_line, end_line = extractor.extract_variable(resolved_path, var)
+ 251                     logger.info(f"Extracted variable '{var}' from {file_path}")
+ 252                 elif hasattr(extractor, "extract_struct"):
+ 253                     # C/C++ uses extract_struct for var= (finds declarations)
+ 254                     if marker:
+ 255                         if hasattr(extractor, "extract_struct_marker"):
+ 256                             code_text, start_line, end_line = extractor.extract_struct_marker(
+ 257                                 resolved_path, var, marker
+ 258                             )
+ 259                             logger.info(f"Extracted marker '{marker}' from variable '{var}' in {file_path}")
+ 260                         else:
+ 261                             return "❌ **ERROR**: Marker extraction in variable not supported"
+ 262                     else:
+ 263                         code_text, start_line, end_line = extractor.extract_struct(resolved_path, var)
+ 264                         logger.info(f"Extracted variable '{var}' from {file_path}")
+ 265                 else:
+ 266                     return "❌ **ERROR**: Variable extraction not supported for this file type"
+ 267             elif struct:
+ 268                 # Extract struct/class/enum definition
+ 269                 if hasattr(extractor, "extract_struct"):
+ 270                     if marker:
+ 271                         if hasattr(extractor, "extract_struct_marker"):
+ 272                             code_text, start_line, end_line = extractor.extract_struct_marker(
+ 273                                 resolved_path, struct, marker
+ 274                             )
+ 275                             logger.info(f"Extracted marker '{marker}' from struct '{struct}' in {file_path}")
+ 276                         else:
+ 277                             return "❌ **ERROR**: Marker extraction in struct not supported"
+ 278                     else:
+ 279                         code_text, start_line, end_line = extractor.extract_struct(resolved_path, struct)
+ 280                         logger.info(f"Extracted struct/class '{struct}' from {file_path}")
+ 281                 else:
+ 282                     return "❌ **ERROR**: Struct/class extraction not supported for this file type"
+ 283             elif message:
+ 284                 # Extract protobuf message
+ 285                 if hasattr(extractor, "extract_message"):
+ 286                     if marker:
+ 287                         code_text, start_line, end_line = extractor.extract_message_marker(
+ 288                             resolved_path, message, marker
+ 289                         )
+ 290                         logger.info(f"Extracted marker '{marker}' from message '{message}' in {file_path}")
+ 291                     else:
+ 292                         code_text, start_line, end_line = extractor.extract_message(resolved_path, message)
+ 293                         logger.info(f"Extracted message '{message}' from {file_path}")
+ 294                 else:
+ 295                     return "❌ **ERROR**: Message extraction not supported for this file type"
+ 296             elif enum:
+ 297                 # Extract protobuf enum
+ 298                 if hasattr(extractor, "extract_enum"):
+ 299                     code_text, start_line, end_line = extractor.extract_enum(resolved_path, enum)
+ 300                     logger.info(f"Extracted enum '{enum}' from {file_path}")
+ 301                 else:
+ 302                     return "❌ **ERROR**: Enum extraction not supported for this file type"
+ 303             elif service:
+ 304                 # Extract protobuf service
+ 305                 if hasattr(extractor, "extract_service"):
+ 306                     code_text, start_line, end_line = extractor.extract_service(resolved_path, service)
+ 307                     logger.info(f"Extracted service '{service}' from {file_path}")
+ 308                 else:
+ 309                     return "❌ **ERROR**: Service extraction not supported for this file type"
+ 310             elif marker:
+ 311                 code_text, start_line, end_line = extractor.extract_marker(resolved_path, marker)
+ 312                 logger.info(f"Extracted marker '{marker}' from {file_path}")
+ 313             elif lines:
+ 314                 start_line, end_line = lines
+ 315                 code_text, start_line, end_line = extractor.extract_lines(resolved_path, start_line, end_line)
+ 316                 logger.info(f"Extracted lines {start_line}-{end_line} from {file_path}")
+ 317             else:
+ 318                 return (
+ 319                     f"❌ **ERROR**: Must specify function, struct, var, function_macro, "
+ 320                     f"macro_definition, lines, or marker for {file_path}"
+ 321                 )
+ 322 
+ 323             # Use original file path for display (not temp file)
+ 324             display_path = self.repo_path / file_path if not Path(file_path).is_absolute() else Path(file_path)
+ 325 
+ 326             # Track this region as covered if we have a ChangesSet
+ 327             if self.changes_set is not None and not active_ref:
+ 328                 # changes_set holds HEAD-relative line numbers (built from
+ 329                 # 'git diff base..HEAD'), but start_line/end_line came from
+ 330                 # the working tree. Translate before subtracting so uncommitted
+ 331                 # edits above the extracted region don't shift the wrong rows.
+ 332                 committed_start = self.github.map_to_committed_line(display_path, start_line)
+ 333                 committed_end = self.github.map_to_committed_line(display_path, end_line)
+ 334                 self.changes_set.subtract(display_path, committed_start, committed_end)
+ 335 
+ 336             # Remap line numbers if requested (for sharing docs from dirty files)
+ 337             display_start = start_line
+ 338             display_end = end_line
+ 339             if self.remap_dirty_lines and not active_ref:
+ 340                 display_start = self.github.map_to_committed_line(display_path, start_line)
+ 341                 display_end = self.github.map_to_committed_line(display_path, end_line)
+ 342 
+ 343             # Build header with GitHub permalink if requested
+ 344             if github and not active_ref:
+ 345                 header = self.github.get_permalink(
+ 346                     display_path, start_line, end_line, display_committed_lines=self.remap_dirty_lines
+ 347                 )
+ 348             else:
+ 349                 display_rel = display_path.relative_to(self.repo_path) if display_path.is_absolute() else display_path
+ 350                 ref_suffix = f" @ {active_ref}" if active_ref else ""
+ 351                 if display_start == display_end:
+ 352                     header = f"📍 `{display_rel}:{display_start}{ref_suffix}`"
+ 353                 else:
+ 354                     header = f"📍 `{display_rel}:{display_start}-{display_end}{ref_suffix}`"
  355 
- 356             # Auto-detect language if not specified
- 357             if not language:
- 358                 suffix = display_path.suffix.lower()
- 359                 language_map = {
- 360                     ".cpp": "cpp",
- 361                     ".cc": "cpp",
- 362                     ".cxx": "cpp",
- 363                     ".hpp": "cpp",
- 364                     ".h": "cpp",
- 365                     ".hxx": "cpp",
- 366                     ".ipp": "cpp",  # Inline implementation files
- 367                     ".macro": "cpp",  # C preprocessor macro files
- 368                     ".c": "c",
- 369                     ".py": "python",
- 370                     ".js": "javascript",
- 371                     ".ts": "typescript",
- 372                     ".tsx": "tsx",
- 373                     ".mts": "typescript",
- 374                     ".cts": "typescript",
- 375                     ".java": "java",
- 376                     ".rs": "rust",
- 377                     ".go": "go",
- 378                     ".proto": "protobuf",
- 379                 }
- 380                 language = language_map.get(suffix, "text")
- 381 
- 382             # Build final output
- 383             return f"{header}\n```{language}\n{code_text}\n```"
- 384 
- 385         except Exception as e:
- 386             error_msg = f"❌ **ERROR**: {e}"
- 387             logger.error(f"Code extraction failed: {e}")
- 388             # Collect file as fixture if collection is enabled
- 389             _collect_error_fixture(resolved_path, str(e))
- 390             return error_msg
- 391 
- 392         finally:
- 393             # Clean up temp file if we created one
- 394             if tmp_file and tmp_file.exists():
- 395                 tmp_file.unlink()
+ 356             # Format code with line numbers and/or blame
+ 357             # Use remapped line numbers for display if remap_dirty_lines is enabled
+ 358             code_start_line = display_start if self.remap_dirty_lines else start_line
+ 359             if blame and not active_ref:
+ 360                 code_text = self.github.format_with_blame(code_text, code_start_line, display_path)
+ 361             elif line_numbers:
+ 362                 code_text = self._add_line_numbers(code_text, code_start_line)
+ 363 
+ 364             # Auto-detect language if not specified
+ 365             if not language:
+ 366                 suffix = display_path.suffix.lower()
+ 367                 language_map = {
+ 368                     ".cpp": "cpp",
+ 369                     ".cc": "cpp",
+ 370                     ".cxx": "cpp",
+ 371                     ".hpp": "cpp",
+ 372                     ".h": "cpp",
+ 373                     ".hxx": "cpp",
+ 374                     ".ipp": "cpp",  # Inline implementation files
+ 375                     ".macro": "cpp",  # C preprocessor macro files
+ 376                     ".c": "c",
+ 377                     ".py": "python",
+ 378                     ".js": "javascript",
+ 379                     ".ts": "typescript",
+ 380                     ".tsx": "tsx",
+ 381                     ".mts": "typescript",
+ 382                     ".cts": "typescript",
+ 383                     ".java": "java",
+ 384                     ".rs": "rust",
+ 385                     ".go": "go",
+ 386                     ".proto": "protobuf",
+ 387                 }
+ 388                 language = language_map.get(suffix, "text")
+ 389 
+ 390             # Build final output
+ 391             return f"{header}\n```{language}\n{code_text}\n```"
+ 392 
+ 393         except Exception as e:
+ 394             error_msg = f"❌ **ERROR**: {e}"
+ 395             logger.error(f"Code extraction failed: {e}")
+ 396             # Collect file as fixture if collection is enabled
+ 397             if resolved_path is not None:
+ 398                 _collect_error_fixture(resolved_path, str(e))
+ 399             return error_msg
+ 400 
+ 401         finally:
+ 402             # Clean up temp file if we created one
+ 403             if tmp_file and tmp_file.exists():
+ 404                 tmp_file.unlink()
 ```
 
 The function handles a wide variety of extraction types — functions, structs, variables, macros, protobuf messages, enums, services, markers, and raw line ranges. It also supports nesting: you can extract a marker *within* a function by passing both `function=` and `marker=`.
@@ -625,101 +633,101 @@ When a `ChangesSet` is provided (validation mode), each extraction automatically
 
 Templates can compose by including other files. Plain markdown files are included verbatim; `.j2` files are rendered as templates with full access to `code()` and other functions:
 
-📍 [`projected_source/core/renderer.py:491-514`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/renderer.py#L491-L514)
+📍 [`projected_source/core/renderer.py:516-539`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/renderer.py#L516-L539)
 ```python
- 491     def _include_function(self, path: str) -> str:
- 492         """
- 493         Include a file into the template output.
- 494 
- 495         .j2 files are rendered as Jinja2 templates (with access to code() etc).
- 496         All other files are included as raw text.
- 497 
- 498         Args:
- 499             path: Path relative to the template directory
- 500 
- 501         Returns:
- 502             File contents (rendered if .j2)
- 503 
- 504         Examples:
- 505             {{ include('background.md') }}
- 506             {{ include('details.md.j2') }}
- 507             {{ include('sections/intro.md') }}
- 508         """
- 509         if path.endswith(".j2"):
- 510             template = self.env.get_template(path)
- 511             return template.render()
- 512         else:
- 513             full_path = self.template_dir / path
- 514             return full_path.read_text()
+ 516     def _include_function(self, path: str) -> str:
+ 517         """
+ 518         Include a file into the template output.
+ 519 
+ 520         .j2 files are rendered as Jinja2 templates (with access to code() etc).
+ 521         All other files are included as raw text.
+ 522 
+ 523         Args:
+ 524             path: Path relative to the template directory
+ 525 
+ 526         Returns:
+ 527             File contents (rendered if .j2)
+ 528 
+ 529         Examples:
+ 530             {{ include('background.md') }}
+ 531             {{ include('details.md.j2') }}
+ 532             {{ include('sections/intro.md') }}
+ 533         """
+ 534         if path.endswith(".j2"):
+ 535             template = self.env.get_template(path)
+ 536             return template.render()
+ 537         else:
+ 538             full_path = self.template_dir / path
+ 539             return full_path.read_text()
 ```
 
 ### Custom Tags
 
 Projects can extend the template environment by placing a `.projected-source.py` file in the project. The renderer discovers it by walking up from the template directory to the git root:
 
-📍 [`projected_source/core/renderer.py:549-577`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/renderer.py#L549-L577)
+📍 [`projected_source/core/renderer.py:574-602`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/renderer.py#L574-L602)
 ```python
- 549     def _find_custom_tags_file(self, start_path: Path) -> Optional[Path]:
- 550         """
- 551         Find .projected-source.py file by walking up from start_path.
- 552         Stops at git root to avoid escaping the repository.
- 553 
- 554         Args:
- 555             start_path: Path to start searching from (usually template dir)
- 556 
- 557         Returns:
- 558             Path to .projected-source.py if found, None otherwise
- 559         """
- 560         current = start_path.resolve()
- 561 
- 562         # Use repo_path as the boundary (it's already the git root)
- 563         git_root = self.repo_path
- 564 
- 565         while current >= git_root:
- 566             custom_file = current / ".projected-source.py"
- 567             if custom_file.exists():
- 568                 logger.info(f"Found custom tags file at {custom_file}")
- 569                 return custom_file
- 570 
- 571             # Move up one directory
- 572             parent = current.parent
- 573             if parent == current:  # Reached filesystem root
- 574                 break
- 575             current = parent
- 576 
- 577         return None
+ 574     def _find_custom_tags_file(self, start_path: Path) -> Optional[Path]:
+ 575         """
+ 576         Find .projected-source.py file by walking up from start_path.
+ 577         Stops at git root to avoid escaping the repository.
+ 578 
+ 579         Args:
+ 580             start_path: Path to start searching from (usually template dir)
+ 581 
+ 582         Returns:
+ 583             Path to .projected-source.py if found, None otherwise
+ 584         """
+ 585         current = start_path.resolve()
+ 586 
+ 587         # Use repo_path as the boundary (it's already the git root)
+ 588         git_root = self.repo_path
+ 589 
+ 590         while current >= git_root:
+ 591             custom_file = current / ".projected-source.py"
+ 592             if custom_file.exists():
+ 593                 logger.info(f"Found custom tags file at {custom_file}")
+ 594                 return custom_file
+ 595 
+ 596             # Move up one directory
+ 597             parent = current.parent
+ 598             if parent == current:  # Reached filesystem root
+ 599                 break
+ 600             current = parent
+ 601 
+ 602         return None
 ```
 
 ### Rendering
 
 The public API is straightforward — `render_template()` for named templates and `render_template_file()` for file paths:
 
-📍 [`projected_source/core/renderer.py:627-650`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/renderer.py#L627-L650)
+📍 [`projected_source/core/renderer.py:652-675`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/renderer.py#L652-L675)
 ```python
- 627     def render_template(self, template_name: str, **context) -> str:
- 628         """
- 629         Render a template with the given context.
- 630 
- 631         Args:
- 632             template_name: Name of the template file
- 633             **context: Additional context variables
- 634 
- 635         Returns:
- 636             Rendered template as string
- 637         """
- 638         try:
- 639             # Load custom tags from .projected-source.py if available
- 640             template_path = self.template_dir / template_name
- 641             self._load_custom_tags(template_path)
- 642 
- 643             template = self.env.get_template(template_name)
- 644             return template.render(**context)
- 645         except jinja2.TemplateNotFound:
- 646             logger.error(f"Template not found: {template_name}")
- 647             raise
- 648         except Exception as e:
- 649             logger.error(f"Template rendering failed: {e}")
- 650             raise
+ 652     def render_template(self, template_name: str, **context) -> str:
+ 653         """
+ 654         Render a template with the given context.
+ 655 
+ 656         Args:
+ 657             template_name: Name of the template file
+ 658             **context: Additional context variables
+ 659 
+ 660         Returns:
+ 661             Rendered template as string
+ 662         """
+ 663         try:
+ 664             # Load custom tags from .projected-source.py if available
+ 665             template_path = self.template_dir / template_name
+ 666             self._load_custom_tags(template_path)
+ 667 
+ 668             template = self.env.get_template(template_name)
+ 669             return template.render(**context)
+ 670         except jinja2.TemplateNotFound:
+ 671             logger.error(f"Template not found: {template_name}")
+ 672             raise
+ 673         except Exception as e:
+ 674             logger.error(f"Template rendering failed: {e}")
+ 675             raise
 ```
 
 ---
@@ -732,7 +740,7 @@ Every extracted code block can include a clickable GitHub permalink. The `GitHub
 
 Repository info is loaded on first access. The class auto-detects the GitHub URL from the git remote, handling both SSH and HTTPS formats:
 
-📍 [`projected_source/core/github.py:186-228`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/github.py#L186-L228)
+📍 [`projected_source/core/github.py:186-228`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/github.py#L186-L228)
 ```python
  186     def _init_repo_info(self):
  187         """Lazy initialization of repository information."""
@@ -785,7 +793,7 @@ When you're working on a file with uncommitted changes, the line numbers in your
 
 The full-diff parser builds a line-by-line mapping from new to old positions:
 
-📍 [`projected_source/core/github.py:37-83`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/github.py#L37-L83)
+📍 [`projected_source/core/github.py:37-83`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/github.py#L37-L83)
 ```python
   37 def build_line_mapping(diff_output: str) -> Dict[int, Optional[int]]:
   38     """
@@ -838,7 +846,7 @@ The full-diff parser builds a line-by-line mapping from new to old positions:
 
 This mapping is used by `map_to_committed_line()`, which falls back gracefully — if a line was newly added, it finds the nearest existing line before it:
 
-📍 [`projected_source/core/github.py:138-173`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/github.py#L138-L173)
+📍 [`projected_source/core/github.py:138-173`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/github.py#L138-L173)
 ```python
  138 def map_line_to_committed_full(new_line: int, diff_output: str) -> int:
  139     """
@@ -882,126 +890,133 @@ This mapping is used by `map_to_committed_line()`, which falls back gracefully �
 
 The `get_permalink()` method ties it all together — it maps lines, builds the URL with line anchors, and returns a markdown link:
 
-📍 [`projected_source/core/github.py:313-391`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/github.py#L313-L391)
+📍 [`projected_source/core/github.py:324-409`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/github.py#L324-L409)
 ```python
- 313     def get_permalink(
- 314         self, file_path: Path, start_line: int = None, end_line: int = None, display_committed_lines: bool = True
- 315     ) -> str:
- 316         """
- 317         Generate a GitHub permalink for a file or line range.
- 318 
- 319         Args:
- 320             file_path: Path to the file
- 321             start_line: Optional start line number (1-based)
- 322             end_line: Optional end line number (1-based)
- 323             display_committed_lines: If True, display shows committed line numbers (matches link).
- 324                                      If False, display shows working copy line numbers.
- 325 
- 326         Returns:
- 327             Formatted markdown link or plain text reference
- 328         """
- 329         # Make path relative to repo root
- 330         try:
- 331             if file_path.is_absolute():
- 332                 rel_path = file_path.relative_to(self.repo_path)
- 333             else:
- 334                 rel_path = file_path
- 335         except ValueError:
- 336             rel_path = file_path
- 337 
- 338         if self.github_url and self.commit_hash:
- 339             # Map line numbers if file is dirty (has uncommitted changes like markers)
- 340             committed_start = None
- 341             committed_end = None
- 342             # Track dirty state authoritatively, not via line-number drift —
- 343             # a file can be edited without shifting the lines we render.
- 344             is_dirty = self.is_file_dirty(file_path)
- 345 
- 346             if start_line is not None:
- 347                 committed_start = self.map_to_committed_line(file_path, start_line)
- 348                 if end_line is not None:
- 349                     committed_end = self.map_to_committed_line(file_path, end_line)
- 350 
- 351             # Build GitHub URL with committed line numbers
- 352             url = f"{self.github_url}/blob/{self.commit_hash}/{rel_path}"
- 353 
- 354             # Add line anchors if specified (using committed line numbers for URL)
- 355             if committed_start is not None:
- 356                 # Choose which line numbers to display
- 357                 if display_committed_lines or not is_dirty:
- 358                     display_start = committed_start
- 359                     display_end = committed_end
- 360                 else:
- 361                     # start_line must be set if committed_start was computed
- 362                     assert start_line is not None
- 363                     display_start = start_line
- 364                     display_end = end_line
- 365 
- 366                 if committed_end and committed_end != committed_start:
- 367                     url += f"#L{committed_start}-L{committed_end}"
- 368                     display = f"{rel_path}:{display_start}-{display_end}"
- 369                     if is_dirty:
- 370                         logger.debug(
- 371                             f"Dirty file: mapped lines {start_line}-{end_line} → {committed_start}-{committed_end}"
- 372                         )
- 373                 else:
- 374                     url += f"#L{committed_start}"
- 375                     display = f"{rel_path}:{display_start}"
- 376             else:
- 377                 display = str(rel_path)
- 378 
- 379             # Surface dirty state so readers know the link points at HEAD content,
- 380             # which may differ from what's rendered above.
- 381             suffix = " *(uncommitted)*" if is_dirty else ""
- 382             return f"📍 [`{display}`]({url}){suffix}"
- 383         else:
- 384             # No GitHub info, return plain text
- 385             if start_line is not None:
- 386                 if end_line and end_line != start_line:
- 387                     return f"📍 `{rel_path}:{start_line}-{end_line}`"
- 388                 else:
- 389                     return f"📍 `{rel_path}:{start_line}`"
- 390             else:
- 391                 return f"📍 `{rel_path}`"
+ 324     def get_permalink(
+ 325         self, file_path: Path, start_line: int = None, end_line: int = None, display_committed_lines: bool = True
+ 326     ) -> str:
+ 327         """
+ 328         Generate a GitHub permalink for a file or line range.
+ 329 
+ 330         Args:
+ 331             file_path: Path to the file
+ 332             start_line: Optional start line number (1-based)
+ 333             end_line: Optional end line number (1-based)
+ 334             display_committed_lines: If True, display shows committed line numbers (matches link).
+ 335                                      If False, display shows working copy line numbers.
+ 336 
+ 337         Returns:
+ 338             Formatted markdown link or plain text reference
+ 339         """
+ 340         # Make path relative to repo root
+ 341         try:
+ 342             if file_path.is_absolute():
+ 343                 rel_path = file_path.relative_to(self.repo_path)
+ 344             else:
+ 345                 rel_path = file_path
+ 346         except ValueError:
+ 347             rel_path = file_path
+ 348 
+ 349         if self.github_url and self.commit_hash:
+ 350             # Map line numbers if file is dirty (has uncommitted changes like markers)
+ 351             committed_start = None
+ 352             committed_end = None
+ 353             # Track dirty state authoritatively, not via line-number drift —
+ 354             # a file can be edited without shifting the lines we render.
+ 355             is_dirty = self.is_file_dirty(file_path)
+ 356 
+ 357             if start_line is not None:
+ 358                 committed_start = self.map_to_committed_line(file_path, start_line)
+ 359                 if end_line is not None:
+ 360                     committed_end = self.map_to_committed_line(file_path, end_line)
+ 361 
+ 362             # Build GitHub URL with committed line numbers
+ 363             url = f"{self.github_url}/blob/{self.commit_hash}/{rel_path}"
+ 364 
+ 365             # Add line anchors if specified (using committed line numbers for URL)
+ 366             if committed_start is not None:
+ 367                 # Choose which line numbers to display
+ 368                 if display_committed_lines or not is_dirty:
+ 369                     display_start = committed_start
+ 370                     display_end = committed_end
+ 371                 else:
+ 372                     # start_line must be set if committed_start was computed
+ 373                     assert start_line is not None
+ 374                     display_start = start_line
+ 375                     display_end = end_line
+ 376 
+ 377                 # URL anchor must use committed line numbers
+ 378                 if committed_end and committed_end != committed_start:
+ 379                     url += f"#L{committed_start}-L{committed_end}"
+ 380                     if is_dirty:
+ 381                         logger.debug(
+ 382                             f"Dirty file: mapped lines {start_line}-{end_line} → {committed_start}-{committed_end}"
+ 383                         )
+ 384                 else:
+ 385                     url += f"#L{committed_start}"
+ 386 
+ 387                 # Display label uses whichever line space we're showing — when
+ 388                 # display_committed_lines=False, working-copy lines may span a
+ 389                 # range even if their committed counterparts collapse to one.
+ 390                 if display_end is not None and display_end != display_start:
+ 391                     display = f"{rel_path}:{display_start}-{display_end}"
+ 392                 else:
+ 393                     display = f"{rel_path}:{display_start}"
+ 394             else:
+ 395                 display = str(rel_path)
+ 396 
+ 397             # Surface dirty state so readers know the link points at HEAD content,
+ 398             # which may differ from what's rendered above.
+ 399             suffix = " *(uncommitted)*" if is_dirty else ""
+ 400             return f"📍 [`{display}`]({url}){suffix}"
+ 401         else:
+ 402             # No GitHub info, return plain text
+ 403             if start_line is not None:
+ 404                 if end_line and end_line != start_line:
+ 405                     return f"📍 `{rel_path}:{start_line}-{end_line}`"
+ 406                 else:
+ 407                     return f"📍 `{rel_path}:{start_line}`"
+ 408             else:
+ 409                 return f"📍 `{rel_path}`"
 ```
 
 ### Blame Support
 
 For deeper code archaeology, `blame=True` annotates each line with its author, date, and commit hash:
 
-📍 [`projected_source/core/github.py:454-484`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/github.py#L454-L484)
+📍 [`projected_source/core/github.py:472-502`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/github.py#L472-L502)
 ```python
- 454     def format_with_blame(self, code_text: str, start_line: int, file_path: Path) -> str:
- 455         """
- 456         Format code with git blame information.
- 457 
- 458         Args:
- 459             code_text: The code to format
- 460             start_line: Starting line number
- 461             file_path: Path to the file
- 462 
- 463         Returns:
- 464             Formatted code with blame info
- 465         """
- 466         lines = code_text.splitlines()
- 467         end_line = start_line + len(lines) - 1
- 468 
- 469         blame_info = self.get_blame(file_path, start_line, end_line)
- 470 
- 471         formatted_lines = []
- 472         for i, line in enumerate(lines):
- 473             line_num = start_line + i
- 474 
- 475             if line_num in blame_info:
- 476                 blame = blame_info[line_num]
- 477                 # Format: line_num | commit | author | date | code
- 478                 formatted_line = f"{line_num:4} │ {blame['commit']} │ {blame['author']:<20} │ {blame['date']} │ {line}"
- 479             else:
- 480                 formatted_line = f"{line_num:4} │ {line}"
- 481 
- 482             formatted_lines.append(formatted_line)
- 483 
- 484         return "\n".join(formatted_lines)
+ 472     def format_with_blame(self, code_text: str, start_line: int, file_path: Path) -> str:
+ 473         """
+ 474         Format code with git blame information.
+ 475 
+ 476         Args:
+ 477             code_text: The code to format
+ 478             start_line: Starting line number
+ 479             file_path: Path to the file
+ 480 
+ 481         Returns:
+ 482             Formatted code with blame info
+ 483         """
+ 484         lines = code_text.splitlines()
+ 485         end_line = start_line + len(lines) - 1
+ 486 
+ 487         blame_info = self.get_blame(file_path, start_line, end_line)
+ 488 
+ 489         formatted_lines = []
+ 490         for i, line in enumerate(lines):
+ 491             line_num = start_line + i
+ 492 
+ 493             if line_num in blame_info:
+ 494                 blame = blame_info[line_num]
+ 495                 # Format: line_num | commit | author | date | code
+ 496                 formatted_line = f"{line_num:4} │ {blame['commit']} │ {blame['author']:<20} │ {blame['date']} │ {line}"
+ 497             else:
+ 498                 formatted_line = f"{line_num:4} │ {line}"
+ 499 
+ 500             formatted_lines.append(formatted_line)
+ 501 
+ 502         return "\n".join(formatted_lines)
 ```
 
 ---
@@ -1014,7 +1029,7 @@ One of the most powerful features: projected-source can verify that your documen
 
 The `ChangesSet` class tracks changed regions as a set of non-overlapping intervals per file. It supports adding regions (which auto-merge overlapping ranges), subtracting regions (which can split intervals), and querying what's left uncovered:
 
-📍 [`projected_source/core/changes_set.py:27-248`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/changes_set.py#L27-L248)
+📍 [`projected_source/core/changes_set.py:27-252`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/changes_set.py#L27-L252)
 ```python
   27 class ChangesSet:
   28     """
@@ -1104,147 +1119,151 @@ The `ChangesSet` class tracks changed regions as a set of non-overlapping interv
  112             if line.startswith("+++ b/"):
  113                 file_path = line[6:]  # Strip "+++ b/"
  114                 current_file = repo_path / file_path
- 115 
- 116             # Hunk header: @@ -old_start,old_count +new_start,new_count @@
- 117             elif line.startswith("@@"):
- 118                 # Parse new file position
- 119                 parts = line.split()
- 120                 if len(parts) >= 3:
- 121                     new_range = parts[2]  # e.g., "+10,5" or "+10"
- 122                     if new_range.startswith("+"):
- 123                         new_range = new_range[1:]
- 124                         if "," in new_range:
- 125                             current_new_line = int(new_range.split(",")[0])
- 126                         else:
- 127                             current_new_line = int(new_range)
- 128 
- 129             # Added or context line - track position
- 130             elif current_file and not line.startswith("-"):
- 131                 if line.startswith("+") or line.startswith(" "):
- 132                     # This line exists in the new version
- 133                     if line.startswith("+"):
- 134                         # Added line - definitely needs coverage
- 135                         self.add(current_file, current_new_line, current_new_line)
- 136                     elif line.startswith(" "):
- 137                         # Context line around a change - also needs coverage
- 138                         # (user chose "all changed" which includes context)
+ 115             # Deleted-file sentinel: '+++ /dev/null' — skip hunk lines so we
+ 116             # don't spuriously record additions against the previous file.
+ 117             elif line.startswith("+++ ") and "/dev/null" in line:
+ 118                 current_file = None
+ 119 
+ 120             # Hunk header: @@ -old_start,old_count +new_start,new_count @@
+ 121             elif line.startswith("@@"):
+ 122                 # Parse new file position
+ 123                 parts = line.split()
+ 124                 if len(parts) >= 3:
+ 125                     new_range = parts[2]  # e.g., "+10,5" or "+10"
+ 126                     if new_range.startswith("+"):
+ 127                         new_range = new_range[1:]
+ 128                         if "," in new_range:
+ 129                             current_new_line = int(new_range.split(",")[0])
+ 130                         else:
+ 131                             current_new_line = int(new_range)
+ 132 
+ 133             # Added or context line - track position
+ 134             elif current_file and not line.startswith("-"):
+ 135                 if line.startswith("+") or line.startswith(" "):
+ 136                     # This line exists in the new version
+ 137                     if line.startswith("+"):
+ 138                         # Added line - definitely needs coverage
  139                         self.add(current_file, current_new_line, current_new_line)
- 140                     current_new_line += 1
- 141 
- 142             # Deleted line - doesn't increment new line counter
- 143             elif line.startswith("-") and not line.startswith("---"):
- 144                 pass  # Deletion - surrounding context already captured
+ 140                     elif line.startswith(" "):
+ 141                         # Context line around a change - also needs coverage
+ 142                         # (user chose "all changed" which includes context)
+ 143                         self.add(current_file, current_new_line, current_new_line)
+ 144                     current_new_line += 1
  145 
- 146     def add(self, file_path: Path, start: int, end: int) -> None:
- 147         """
- 148         Add a region, merging with overlapping or adjacent regions.
+ 146             # Deleted line - doesn't increment new line counter
+ 147             elif line.startswith("-") and not line.startswith("---"):
+ 148                 pass  # Deletion - surrounding context already captured
  149 
- 150         Args:
- 151             file_path: Path to the file
- 152             start: Start line (1-based, inclusive)
- 153             end: End line (1-based, inclusive)
- 154         """
- 155         if start > end:
- 156             start, end = end, start
- 157 
- 158         regions = self._regions.setdefault(file_path, [])
- 159 
- 160         # Add new region and re-merge everything
- 161         regions.append((start, end))
- 162         self._regions[file_path] = self._merge_sorted(sorted(regions))
+ 150     def add(self, file_path: Path, start: int, end: int) -> None:
+ 151         """
+ 152         Add a region, merging with overlapping or adjacent regions.
+ 153 
+ 154         Args:
+ 155             file_path: Path to the file
+ 156             start: Start line (1-based, inclusive)
+ 157             end: End line (1-based, inclusive)
+ 158         """
+ 159         if start > end:
+ 160             start, end = end, start
+ 161 
+ 162         regions = self._regions.setdefault(file_path, [])
  163 
- 164     def _merge_sorted(self, regions: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
- 165         """Merge a sorted list of potentially overlapping regions."""
- 166         if not regions:
- 167             return []
- 168 
- 169         result = [regions[0]]
- 170         for start, end in regions[1:]:
- 171             last_start, last_end = result[-1]
- 172             if start <= last_end + 1:
- 173                 # Overlapping or adjacent - merge
- 174                 result[-1] = (last_start, max(last_end, end))
- 175             else:
- 176                 result.append((start, end))
- 177         return result
- 178 
- 179     def subtract(self, file_path: Path, start: int, end: int) -> None:
- 180         """
- 181         Remove a region (mark as covered by documentation).
+ 164         # Add new region and re-merge everything
+ 165         regions.append((start, end))
+ 166         self._regions[file_path] = self._merge_sorted(sorted(regions))
+ 167 
+ 168     def _merge_sorted(self, regions: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+ 169         """Merge a sorted list of potentially overlapping regions."""
+ 170         if not regions:
+ 171             return []
+ 172 
+ 173         result = [regions[0]]
+ 174         for start, end in regions[1:]:
+ 175             last_start, last_end = result[-1]
+ 176             if start <= last_end + 1:
+ 177                 # Overlapping or adjacent - merge
+ 178                 result[-1] = (last_start, max(last_end, end))
+ 179             else:
+ 180                 result.append((start, end))
+ 181         return result
  182 
- 183         May split existing regions if the subtracted region is in the middle.
- 184 
- 185         Args:
- 186             file_path: Path to the file
- 187             start: Start line (1-based, inclusive)
- 188             end: End line (1-based, inclusive)
- 189         """
- 190         if file_path not in self._regions:
- 191             return
- 192 
- 193         if start > end:
- 194             start, end = end, start
- 195 
- 196         new_regions: List[Tuple[int, int]] = []
- 197 
- 198         for reg_start, reg_end in self._regions[file_path]:
- 199             # No overlap - keep as is
- 200             if end < reg_start or start > reg_end:
- 201                 new_regions.append((reg_start, reg_end))
- 202 
- 203             # Full coverage - remove entirely
- 204             elif start <= reg_start and end >= reg_end:
- 205                 pass  # Don't add it
+ 183     def subtract(self, file_path: Path, start: int, end: int) -> None:
+ 184         """
+ 185         Remove a region (mark as covered by documentation).
+ 186 
+ 187         May split existing regions if the subtracted region is in the middle.
+ 188 
+ 189         Args:
+ 190             file_path: Path to the file
+ 191             start: Start line (1-based, inclusive)
+ 192             end: End line (1-based, inclusive)
+ 193         """
+ 194         if file_path not in self._regions:
+ 195             return
+ 196 
+ 197         if start > end:
+ 198             start, end = end, start
+ 199 
+ 200         new_regions: List[Tuple[int, int]] = []
+ 201 
+ 202         for reg_start, reg_end in self._regions[file_path]:
+ 203             # No overlap - keep as is
+ 204             if end < reg_start or start > reg_end:
+ 205                 new_regions.append((reg_start, reg_end))
  206 
- 207             # Partial overlap - may need to split
- 208             else:
- 209                 # Left remainder
- 210                 if reg_start < start:
- 211                     new_regions.append((reg_start, start - 1))
- 212                 # Right remainder
- 213                 if reg_end > end:
- 214                     new_regions.append((end + 1, reg_end))
- 215 
- 216         if new_regions:
- 217             self._regions[file_path] = new_regions
- 218         else:
- 219             del self._regions[file_path]
- 220 
- 221     def uncovered(self) -> List[ChangeRegion]:
- 222         """Return list of regions not yet claimed by documentation."""
- 223         result = []
- 224         for file_path, regions in sorted(self._regions.items()):
- 225             for start, end in regions:
- 226                 result.append(ChangeRegion(file_path, start, end))
- 227         return result
- 228 
- 229     def is_complete(self) -> bool:
- 230         """Return True if all regions have been claimed."""
- 231         return len(self._regions) == 0
+ 207             # Full coverage - remove entirely
+ 208             elif start <= reg_start and end >= reg_end:
+ 209                 pass  # Don't add it
+ 210 
+ 211             # Partial overlap - may need to split
+ 212             else:
+ 213                 # Left remainder
+ 214                 if reg_start < start:
+ 215                     new_regions.append((reg_start, start - 1))
+ 216                 # Right remainder
+ 217                 if reg_end > end:
+ 218                     new_regions.append((end + 1, reg_end))
+ 219 
+ 220         if new_regions:
+ 221             self._regions[file_path] = new_regions
+ 222         else:
+ 223             del self._regions[file_path]
+ 224 
+ 225     def uncovered(self) -> List[ChangeRegion]:
+ 226         """Return list of regions not yet claimed by documentation."""
+ 227         result = []
+ 228         for file_path, regions in sorted(self._regions.items()):
+ 229             for start, end in regions:
+ 230                 result.append(ChangeRegion(file_path, start, end))
+ 231         return result
  232 
- 233     def files(self) -> List[Path]:
- 234         """Return list of files with uncovered changes."""
- 235         return list(self._regions.keys())
+ 233     def is_complete(self) -> bool:
+ 234         """Return True if all regions have been claimed."""
+ 235         return len(self._regions) == 0
  236 
- 237     def __len__(self) -> int:
- 238         """Return total number of uncovered regions."""
- 239         return sum(len(regions) for regions in self._regions.values())
+ 237     def files(self) -> List[Path]:
+ 238         """Return list of files with uncovered changes."""
+ 239         return list(self._regions.keys())
  240 
- 241     def __bool__(self) -> bool:
- 242         """Return True if there are uncovered regions."""
- 243         return len(self._regions) > 0
+ 241     def __len__(self) -> int:
+ 242         """Return total number of uncovered regions."""
+ 243         return sum(len(regions) for regions in self._regions.values())
  244 
- 245     def __repr__(self) -> str:
- 246         total = len(self)
- 247         files = len(self._regions)
- 248         return f"ChangesSet({total} regions in {files} files)"
+ 245     def __bool__(self) -> bool:
+ 246         """Return True if there are uncovered regions."""
+ 247         return len(self._regions) > 0
+ 248 
+ 249     def __repr__(self) -> str:
+ 250         total = len(self)
+ 251         files = len(self._regions)
+ 252         return f"ChangesSet({total} regions in {files} files)"
 ```
 
 ### Building from Git Diff
 
 `from_diff()` parses unified diff output to populate the set. It supports both simple base refs (`origin/main`) and explicit ranges (`HEAD~5..HEAD~2`):
 
-📍 [`projected_source/core/changes_set.py:40-73`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/changes_set.py#L40-L73)
+📍 [`projected_source/core/changes_set.py:40-73`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/changes_set.py#L40-L73)
 ```python
   40     @classmethod
   41     def from_diff(cls, base: Optional[str] = None, repo_path: Optional[Path] = None) -> "ChangesSet":
@@ -1284,7 +1303,7 @@ The `ChangesSet` class tracks changed regions as a set of non-overlapping interv
 
 The diff parser walks through hunk headers and added lines to build up the initial set of changed regions:
 
-📍 [`projected_source/core/changes_set.py:105-144`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/changes_set.py#L105-L144)
+📍 [`projected_source/core/changes_set.py:105-148`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/changes_set.py#L105-L148)
 ```python
  105     def _parse_diff(self, diff_output: str, repo_path: Path) -> None:
  106         """Parse unified diff output and populate regions."""
@@ -1296,98 +1315,102 @@ The diff parser walks through hunk headers and added lines to build up the initi
  112             if line.startswith("+++ b/"):
  113                 file_path = line[6:]  # Strip "+++ b/"
  114                 current_file = repo_path / file_path
- 115 
- 116             # Hunk header: @@ -old_start,old_count +new_start,new_count @@
- 117             elif line.startswith("@@"):
- 118                 # Parse new file position
- 119                 parts = line.split()
- 120                 if len(parts) >= 3:
- 121                     new_range = parts[2]  # e.g., "+10,5" or "+10"
- 122                     if new_range.startswith("+"):
- 123                         new_range = new_range[1:]
- 124                         if "," in new_range:
- 125                             current_new_line = int(new_range.split(",")[0])
- 126                         else:
- 127                             current_new_line = int(new_range)
- 128 
- 129             # Added or context line - track position
- 130             elif current_file and not line.startswith("-"):
- 131                 if line.startswith("+") or line.startswith(" "):
- 132                     # This line exists in the new version
- 133                     if line.startswith("+"):
- 134                         # Added line - definitely needs coverage
- 135                         self.add(current_file, current_new_line, current_new_line)
- 136                     elif line.startswith(" "):
- 137                         # Context line around a change - also needs coverage
- 138                         # (user chose "all changed" which includes context)
+ 115             # Deleted-file sentinel: '+++ /dev/null' — skip hunk lines so we
+ 116             # don't spuriously record additions against the previous file.
+ 117             elif line.startswith("+++ ") and "/dev/null" in line:
+ 118                 current_file = None
+ 119 
+ 120             # Hunk header: @@ -old_start,old_count +new_start,new_count @@
+ 121             elif line.startswith("@@"):
+ 122                 # Parse new file position
+ 123                 parts = line.split()
+ 124                 if len(parts) >= 3:
+ 125                     new_range = parts[2]  # e.g., "+10,5" or "+10"
+ 126                     if new_range.startswith("+"):
+ 127                         new_range = new_range[1:]
+ 128                         if "," in new_range:
+ 129                             current_new_line = int(new_range.split(",")[0])
+ 130                         else:
+ 131                             current_new_line = int(new_range)
+ 132 
+ 133             # Added or context line - track position
+ 134             elif current_file and not line.startswith("-"):
+ 135                 if line.startswith("+") or line.startswith(" "):
+ 136                     # This line exists in the new version
+ 137                     if line.startswith("+"):
+ 138                         # Added line - definitely needs coverage
  139                         self.add(current_file, current_new_line, current_new_line)
- 140                     current_new_line += 1
- 141 
- 142             # Deleted line - doesn't increment new line counter
- 143             elif line.startswith("-") and not line.startswith("---"):
- 144                 pass  # Deletion - surrounding context already captured
+ 140                     elif line.startswith(" "):
+ 141                         # Context line around a change - also needs coverage
+ 142                         # (user chose "all changed" which includes context)
+ 143                         self.add(current_file, current_new_line, current_new_line)
+ 144                     current_new_line += 1
+ 145 
+ 146             # Deleted line - doesn't increment new line counter
+ 147             elif line.startswith("-") and not line.startswith("---"):
+ 148                 pass  # Deletion - surrounding context already captured
 ```
 
 ### Subtract and Query
 
 As templates render, each `code()` call subtracts its extracted region. The `subtract()` method handles partial overlaps — if documentation covers the middle of a changed region, it splits into two uncovered remainders:
 
-📍 [`projected_source/core/changes_set.py:179-219`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/changes_set.py#L179-L219)
+📍 [`projected_source/core/changes_set.py:183-223`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/changes_set.py#L183-L223)
 ```python
- 179     def subtract(self, file_path: Path, start: int, end: int) -> None:
- 180         """
- 181         Remove a region (mark as covered by documentation).
- 182 
- 183         May split existing regions if the subtracted region is in the middle.
- 184 
- 185         Args:
- 186             file_path: Path to the file
- 187             start: Start line (1-based, inclusive)
- 188             end: End line (1-based, inclusive)
- 189         """
- 190         if file_path not in self._regions:
- 191             return
- 192 
- 193         if start > end:
- 194             start, end = end, start
- 195 
- 196         new_regions: List[Tuple[int, int]] = []
- 197 
- 198         for reg_start, reg_end in self._regions[file_path]:
- 199             # No overlap - keep as is
- 200             if end < reg_start or start > reg_end:
- 201                 new_regions.append((reg_start, reg_end))
- 202 
- 203             # Full coverage - remove entirely
- 204             elif start <= reg_start and end >= reg_end:
- 205                 pass  # Don't add it
+ 183     def subtract(self, file_path: Path, start: int, end: int) -> None:
+ 184         """
+ 185         Remove a region (mark as covered by documentation).
+ 186 
+ 187         May split existing regions if the subtracted region is in the middle.
+ 188 
+ 189         Args:
+ 190             file_path: Path to the file
+ 191             start: Start line (1-based, inclusive)
+ 192             end: End line (1-based, inclusive)
+ 193         """
+ 194         if file_path not in self._regions:
+ 195             return
+ 196 
+ 197         if start > end:
+ 198             start, end = end, start
+ 199 
+ 200         new_regions: List[Tuple[int, int]] = []
+ 201 
+ 202         for reg_start, reg_end in self._regions[file_path]:
+ 203             # No overlap - keep as is
+ 204             if end < reg_start or start > reg_end:
+ 205                 new_regions.append((reg_start, reg_end))
  206 
- 207             # Partial overlap - may need to split
- 208             else:
- 209                 # Left remainder
- 210                 if reg_start < start:
- 211                     new_regions.append((reg_start, start - 1))
- 212                 # Right remainder
- 213                 if reg_end > end:
- 214                     new_regions.append((end + 1, reg_end))
- 215 
- 216         if new_regions:
- 217             self._regions[file_path] = new_regions
- 218         else:
- 219             del self._regions[file_path]
+ 207             # Full coverage - remove entirely
+ 208             elif start <= reg_start and end >= reg_end:
+ 209                 pass  # Don't add it
+ 210 
+ 211             # Partial overlap - may need to split
+ 212             else:
+ 213                 # Left remainder
+ 214                 if reg_start < start:
+ 215                     new_regions.append((reg_start, start - 1))
+ 216                 # Right remainder
+ 217                 if reg_end > end:
+ 218                     new_regions.append((end + 1, reg_end))
+ 219 
+ 220         if new_regions:
+ 221             self._regions[file_path] = new_regions
+ 222         else:
+ 223             del self._regions[file_path]
 ```
 
 After rendering, `uncovered()` returns whatever's left:
 
-📍 [`projected_source/core/changes_set.py:221-227`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/core/changes_set.py#L221-L227)
+📍 [`projected_source/core/changes_set.py:225-231`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/changes_set.py#L225-L231)
 ```python
- 221     def uncovered(self) -> List[ChangeRegion]:
- 222         """Return list of regions not yet claimed by documentation."""
- 223         result = []
- 224         for file_path, regions in sorted(self._regions.items()):
- 225             for start, end in regions:
- 226                 result.append(ChangeRegion(file_path, start, end))
- 227         return result
+ 225     def uncovered(self) -> List[ChangeRegion]:
+ 226         """Return list of regions not yet claimed by documentation."""
+ 227         result = []
+ 228         for file_path, regions in sorted(self._regions.items()):
+ 229             for start, end in regions:
+ 230                 result.append(ChangeRegion(file_path, start, end))
+ 231         return result
 ```
 
 ---
@@ -1396,7 +1419,7 @@ After rendering, `uncovered()` returns whatever's left:
 
 The CLI is built with Click. The main entry point registers all commands:
 
-📍 [`projected_source/cli/__init__.py:19-29`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/cli/__init__.py#L19-L29)
+📍 [`projected_source/cli/__init__.py:19-29`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/cli/__init__.py#L19-L29)
 ```python
   19 @click.group()
   20 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
@@ -1417,113 +1440,113 @@ The primary command renders `.md.j2` templates. It handles single files, directo
 
 Single-file rendering resolves the template path, creates a `TemplateRenderer`, and writes the output:
 
-📍 [`projected_source/cli/render.py:356-386`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/cli/render.py#L356-L386)
+📍 [`projected_source/cli/render.py:364-394`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/cli/render.py#L364-L394)
 ```python
- 356 def _render_file(
- 357     input_file, output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None, header=False
- 358 ):
- 359     """Render a single template file."""
- 360     # Determine template directory
- 361     template_dir = input_file.parent
- 362     template_name = input_file.name
- 363 
- 364     # Create renderer
- 365     renderer = TemplateRenderer(
- 366         template_dir=template_dir, repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
- 367     )
- 368 
- 369     try:
- 370         rendered = renderer.render_template(template_name)
+ 364 def _render_file(
+ 365     input_file, output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None, header=False
+ 366 ):
+ 367     """Render a single template file."""
+ 368     # Determine template directory
+ 369     template_dir = input_file.parent
+ 370     template_name = input_file.name
  371 
- 372         if header:
- 373             rendered = _build_header(template_name, repo_path) + rendered
- 374 
- 375         if output_to_stdout:
- 376             # Output to stdout
- 377             click.echo(rendered)
- 378         else:
- 379             # Output to file
- 380             output_file.parent.mkdir(parents=True, exist_ok=True)
- 381             output_file.write_text(rendered)
- 382             console.print(f"[green]✓[/green] {input_file} → {output_file}")
- 383 
- 384     except Exception as e:
- 385         console.print(f"[red]✗ Failed to render {input_file}:[/red] {e}")
- 386         sys.exit(1)
+ 372     # Create renderer
+ 373     renderer = TemplateRenderer(
+ 374         template_dir=template_dir, repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
+ 375     )
+ 376 
+ 377     try:
+ 378         rendered = renderer.render_template(template_name)
+ 379 
+ 380         if header:
+ 381             rendered = _build_header(template_name, repo_path) + rendered
+ 382 
+ 383         if output_to_stdout:
+ 384             # Output to stdout
+ 385             click.echo(rendered)
+ 386         else:
+ 387             # Output to file
+ 388             output_file.parent.mkdir(parents=True, exist_ok=True)
+ 389             output_file.write_text(rendered)
+ 390             console.print(f"[green]✓[/green] {input_file} → {output_file}")
+ 391 
+ 392     except Exception as e:
+ 393         console.print(f"[red]✗ Failed to render {input_file}:[/red] {e}")
+ 394         sys.exit(1)
 ```
 
 Directory rendering walks the tree and renders all `.j2` files:
 
-📍 [`projected_source/cli/render.py:389-446`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/cli/render.py#L389-L446)
+📍 [`projected_source/cli/render.py:397-454`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/cli/render.py#L397-L454)
 ```python
- 389 def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False, changes_set=None, header=False):
- 390     """Render all templates in a directory."""
- 391     templates = list(input_dir.glob("**/*.j2"))
- 392 
- 393     if not templates:
- 394         console.print(f"[yellow]No .j2 templates found in {input_dir}[/yellow]")
- 395         return
- 396 
- 397     console.print(f"[bold]Processing {len(templates)} templates from {input_dir}[/bold]")
- 398 
- 399     # Create renderer
- 400     renderer = TemplateRenderer(
- 401         template_dir=input_dir, repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
- 402     )
- 403 
- 404     # Track results
- 405     success_count = 0
- 406     failed = []
- 407 
- 408     # Process each template
- 409     for template_path in templates:
- 410         rel_path = template_path.relative_to(input_dir)
+ 397 def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False, changes_set=None, header=False):
+ 398     """Render all templates in a directory."""
+ 399     templates = list(input_dir.glob("**/*.j2"))
+ 400 
+ 401     if not templates:
+ 402         console.print(f"[yellow]No .j2 templates found in {input_dir}[/yellow]")
+ 403         return
+ 404 
+ 405     console.print(f"[bold]Processing {len(templates)} templates from {input_dir}[/bold]")
+ 406 
+ 407     # Create renderer
+ 408     renderer = TemplateRenderer(
+ 409         template_dir=input_dir, repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
+ 410     )
  411 
- 412         # Determine output path (strip .j2 extension)
- 413         if rel_path.suffix == ".j2":
- 414             output_rel_path = rel_path.with_suffix("")
- 415         else:
- 416             output_rel_path = rel_path
- 417 
- 418         output_path_full = output_dir / output_rel_path
+ 412     # Track results
+ 413     success_count = 0
+ 414     failed = []
+ 415 
+ 416     # Process each template
+ 417     for template_path in templates:
+ 418         rel_path = template_path.relative_to(input_dir)
  419 
- 420         try:
- 421             # Render template
- 422             rendered = renderer.render_template(str(rel_path))
- 423 
- 424             if header:
- 425                 rendered = _build_header(str(rel_path), repo_path) + rendered
- 426 
- 427             # Write output
- 428             output_path_full.parent.mkdir(parents=True, exist_ok=True)
- 429             output_path_full.write_text(rendered)
- 430 
- 431             console.print(f"  [green]✓[/green] {rel_path} → {output_rel_path}")
- 432             success_count += 1
- 433 
- 434         except Exception as e:
- 435             console.print(f"  [red]✗[/red] {rel_path}: {e}")
- 436             failed.append((rel_path, str(e)))
- 437 
- 438     # Summary
- 439     console.print("\n[bold]Summary:[/bold]")
- 440     console.print(f"  [green]{success_count} templates rendered successfully[/green]")
+ 420         # Determine output path (strip .j2 extension)
+ 421         if rel_path.suffix == ".j2":
+ 422             output_rel_path = rel_path.with_suffix("")
+ 423         else:
+ 424             output_rel_path = rel_path
+ 425 
+ 426         output_path_full = output_dir / output_rel_path
+ 427 
+ 428         try:
+ 429             # Render template
+ 430             rendered = renderer.render_template(str(rel_path))
+ 431 
+ 432             if header:
+ 433                 rendered = _build_header(str(rel_path), repo_path) + rendered
+ 434 
+ 435             # Write output
+ 436             output_path_full.parent.mkdir(parents=True, exist_ok=True)
+ 437             output_path_full.write_text(rendered)
+ 438 
+ 439             console.print(f"  [green]✓[/green] {rel_path} → {output_rel_path}")
+ 440             success_count += 1
  441 
- 442     if failed:
- 443         console.print(f"  [red]{len(failed)} templates failed:[/red]")
- 444         for template, error in failed:
- 445             console.print(f"    • {template}: {error}")
- 446         sys.exit(1)
+ 442         except Exception as e:
+ 443             console.print(f"  [red]✗[/red] {rel_path}: {e}")
+ 444             failed.append((rel_path, str(e)))
+ 445 
+ 446     # Summary
+ 447     console.print("\n[bold]Summary:[/bold]")
+ 448     console.print(f"  [green]{success_count} templates rendered successfully[/green]")
+ 449 
+ 450     if failed:
+ 451         console.print(f"  [red]{len(failed)} templates failed:[/red]")
+ 452         for template, error in failed:
+ 453             console.print(f"    • {template}: {error}")
+ 454         sys.exit(1)
 ```
 
 ### Symbol Discovery
 
 The `list-functions` command is essential for authoring templates — it shows every extractable symbol in a file, including the parameter you'd use in a `code()` call:
 
-📍 [`projected_source/cli/list_symbols.py:15-107`](https://github.com/sublimator/projected-source/blob/68bf0b619a9c11249dc4b31fc3ad677292854a53/projected_source/cli/list_symbols.py#L15-L107)
+📍 [`projected_source/cli/list_symbols.py:15-107`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/cli/list_symbols.py#L15-L107)
 ```python
   15 @click.command("list-functions")
-  16 @click.argument("file", required=False, type=click.Path(exists=True))
+  16 @click.argument("file", required=False, type=click.Path(exists=True, dir_okay=False))
   17 @click.option(
   18     "--include-tests",
   19     is_flag=True,
