@@ -45,7 +45,7 @@ class BaseExtractor:
         end = min(len(lines), end_line)
 
         code_lines = lines[start:end]
-        return "\n".join(code_lines), start_line, end_line
+        return "\n".join(code_lines), max(1, start_line), min(len(lines), end_line)
 
     def find_markers_in_node(self, node: Node) -> Dict[str, Tuple[int, int]]:
         """

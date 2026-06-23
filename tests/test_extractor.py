@@ -120,8 +120,30 @@ line 5
         temp_path.unlink()
 
 
+def test_extract_lines_clamps_out_of_bounds_end():
+    """extract_lines should return the actual clamped end_line, not the user-supplied one."""
+    extractor = CppExtractor()
+
+    # File with exactly 10 lines
+    test_code = "\n".join(f"line {i}" for i in range(1, 11)) + "\n"
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".cpp", delete=False) as f:
+        f.write(test_code)
+        temp_path = Path(f.name)
+
+    try:
+        code_text, start_line, end_line = extractor.extract_lines(temp_path, 1, 999)
+
+        assert start_line == 1
+        assert end_line == 10
+        assert code_text.splitlines()[-1] == "line 10"
+    finally:
+        temp_path.unlink()
+
+
 if __name__ == "__main__":
     test_find_markers()
     test_extract_function()
     test_extract_lines()
+    test_extract_lines_clamps_out_of_bounds_end()
     print("✓ All tests passed!")

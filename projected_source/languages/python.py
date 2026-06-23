@@ -32,12 +32,19 @@ class PythonExtractor(BaseExtractor):
         raise NotImplementedError("PythonExtractor uses ast, not tree-sitter")
 
     def extract_lines(self, file_path: Path, start_line: int, end_line: int) -> Tuple[str, int, int]:
-        """Extract lines from a file (reimplemented without tree-sitter)."""
+        """Extract lines from a file (reimplemented without tree-sitter).
+
+        Returns the clamped ``(start_line, end_line)`` actually used so that
+        callers' permalinks, change-set subtractions, and headers don't get
+        out-of-bounds values when the request exceeds the file length.
+        """
         lines = file_path.read_text().splitlines()
         start = max(0, start_line - 1)
         end = min(len(lines), end_line)
         code_lines = lines[start:end]
-        return "\n".join(code_lines), start_line, end_line
+        clamped_start = max(1, start_line) if lines else start_line
+        clamped_end = min(len(lines), end_line) if lines else end_line
+        return "\n".join(code_lines), clamped_start, clamped_end
 
     def extract_function(
         self, file_path: Path, function_name: str, signature: str = None
