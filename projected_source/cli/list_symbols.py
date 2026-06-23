@@ -13,7 +13,7 @@ from .helpers import console
 
 
 @click.command("list-functions")
-@click.argument("file", required=False, type=click.Path(exists=True))
+@click.argument("file", required=False, type=click.Path(exists=True, dir_okay=False))
 @click.option(
     "--include-tests",
     is_flag=True,

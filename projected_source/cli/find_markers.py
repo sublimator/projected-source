@@ -127,12 +127,18 @@ def find_markers(since: str, remove: bool, repo_path: Path):
             lines_to_remove = {m[0] for m in markers}  # line numbers (1-based)
 
             try:
-                original_lines = file_path.read_text().splitlines()
-                new_lines = [line for i, line in enumerate(original_lines, 1) if i not in lines_to_remove]
+                # Read raw bytes so we preserve original line endings (CRLF/LF/CR)
+                # instead of collapsing them all to LF via splitlines/join.
+                original_bytes = file_path.read_bytes()
+                # Split keeping line terminators so each chunk retains its own ending.
+                original_lines_raw = original_bytes.decode("utf-8", errors="surrogateescape").splitlines(keepends=True)
+                new_lines_raw = [
+                    line for i, line in enumerate(original_lines_raw, 1) if i not in lines_to_remove
+                ]
 
-                if len(new_lines) < len(original_lines):
-                    file_path.write_text("\n".join(new_lines) + "\n")
-                    count = len(original_lines) - len(new_lines)
+                if len(new_lines_raw) < len(original_lines_raw):
+                    file_path.write_bytes("".join(new_lines_raw).encode("utf-8", errors="surrogateescape"))
+                    count = len(original_lines_raw) - len(new_lines_raw)
                     removed_count += count
 
                     try:

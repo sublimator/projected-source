@@ -41,7 +41,7 @@ def _run_list_functions(source_file: Path) -> str:
 
 
 @click.command("bug-report")
-@click.argument("source_file", type=click.Path(exists=True, path_type=Path))
+@click.argument("source_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.argument("symbol", required=False)
 @click.option("--error", "-e", help="Error message or description of what went wrong")
 @click.option("--expected", help="What you expected to be extracted")

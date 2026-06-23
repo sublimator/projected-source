@@ -274,57 +274,60 @@ def render(
         return changes_set
 
     # Render - either against working directory or a specific commit
-    if commit:
-        with git_worktree_at_commit(repo_path, commit) as worktree_path:
-            changes_set = do_render(worktree_path)
-    else:
-        changes_set = do_render(repo_path)
-
-    # Report validation results
-    if changes_set is not None:
-        uncovered = changes_set.uncovered()
-        if uncovered:
-            console.print(f"\n[yellow]⚠ {len(uncovered)} uncovered regions:[/yellow]")
-            # Group by file
-            by_file = defaultdict(list)
-            for region in uncovered:
-                by_file[region.file_path].append((region.start_line, region.end_line))
-
-            for abs_path, ranges in by_file.items():
-                try:
-                    rel_path = abs_path.relative_to(repo_path)
-                except ValueError:
-                    rel_path = abs_path
-                console.print(f"\n[cyan]━━━ {rel_path} ━━━[/cyan]")
-
-                # Read file once, show each range
-                try:
-                    lines = abs_path.read_text().splitlines()
-                    for start, end in ranges:
-                        console.print(f"[dim]{start}-{end}:[/dim]")
-                        for i in range(start - 1, min(end, len(lines))):
-                            console.print(f"  [dim]{i + 1:4}[/dim] {lines[i]}")
-                except Exception as e:
-                    console.print(f"  [red]Could not read file: {e}[/red]")
-
-            if strict:
-                console.print("\n[red]✗ Validation failed (--strict mode)[/red]")
-                sys.exit(1)
+    changes_set = None
+    try:
+        if commit:
+            with git_worktree_at_commit(repo_path, commit) as worktree_path:
+                changes_set = do_render(worktree_path)
         else:
-            console.print("[green]✓ All changes documented[/green]")
+            changes_set = do_render(repo_path)
 
-    # Finalize fixture collection
-    collector = get_fixture_collector()
-    if collector:
-        manifest_path = collector.write_manifest()
-        if manifest_path:
-            console.print(
-                f"\n[yellow]Collected {len(collector.errors)} errors "
-                f"({len(collector.copied_files)} files) → {manifest_path}[/yellow]"
-            )
-        else:
-            console.print("[green]No errors to collect[/green]")
-        set_fixture_collector(None)
+        # Report validation results
+        if changes_set is not None:
+            uncovered = changes_set.uncovered()
+            if uncovered:
+                console.print(f"\n[yellow]⚠ {len(uncovered)} uncovered regions:[/yellow]")
+                # Group by file
+                by_file = defaultdict(list)
+                for region in uncovered:
+                    by_file[region.file_path].append((region.start_line, region.end_line))
+
+                for abs_path, ranges in by_file.items():
+                    try:
+                        rel_path = abs_path.relative_to(repo_path)
+                    except ValueError:
+                        rel_path = abs_path
+                    console.print(f"\n[cyan]━━━ {rel_path} ━━━[/cyan]")
+
+                    # Read file once, show each range
+                    try:
+                        lines = abs_path.read_text().splitlines()
+                        for start, end in ranges:
+                            console.print(f"[dim]{start}-{end}:[/dim]")
+                            for i in range(start - 1, min(end, len(lines))):
+                                console.print(f"  [dim]{i + 1:4}[/dim] {lines[i]}")
+                    except Exception as e:
+                        console.print(f"  [red]Could not read file: {e}[/red]")
+
+                if strict:
+                    console.print("\n[red]✗ Validation failed (--strict mode)[/red]")
+                    sys.exit(1)
+            else:
+                console.print("[green]✓ All changes documented[/green]")
+    finally:
+        # Finalize fixture collection — always run so manifest is written
+        # even when do_render() / sys.exit() bypass normal flow.
+        collector = get_fixture_collector()
+        if collector:
+            manifest_path = collector.write_manifest()
+            if collector.errors:
+                console.print(
+                    f"\n[yellow]Collected {len(collector.errors)} errors "
+                    f"({len(collector.copied_files)} files) → {manifest_path}[/yellow]"
+                )
+            else:
+                console.print(f"[green]No errors to collect[/green] (manifest: {manifest_path})")
+            set_fixture_collector(None)
 
 
 def _render_stdin(output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None, header=False):
@@ -337,20 +340,25 @@ def _render_stdin(output_file, repo_path, output_to_stdout, remap_dirty_lines=Fa
         template_dir=Path.cwd(), repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
     )
 
-    # Render the template directly from string
-    rendered = renderer.env.from_string(template_content).render()
+    try:
+        # Render the template directly from string
+        rendered = renderer.env.from_string(template_content).render()
 
-    if header:
-        rendered = _build_header("<stdin>", repo_path) + rendered
+        if header:
+            rendered = _build_header("<stdin>", repo_path) + rendered
 
-    if output_to_stdout:
-        # Output to stdout
-        click.echo(rendered)
-    else:
-        # Output to file
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        output_file.write_text(rendered)
-        console.print(f"[green]✓[/green] stdin → {output_file}")
+        if output_to_stdout:
+            # Output to stdout
+            click.echo(rendered)
+        else:
+            # Output to file
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_text(rendered)
+            console.print(f"[green]✓[/green] stdin → {output_file}")
+
+    except Exception as e:
+        console.print(f"[red]✗ Failed to render stdin:[/red] {e}")
+        sys.exit(1)
 
 
 def _render_file(
