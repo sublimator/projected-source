@@ -283,7 +283,12 @@ class MacroFinder:
         return None
 
     def find_markers_in_node(self, node: Node) -> Dict[str, Tuple[int, int]]:
-        """Find comment markers within a node."""
+        """Find comment markers within a node.
+
+        Returns 1-based ``(start_line, end_line)`` for the code *between* the
+        ``//@@start`` and ``//@@end`` comments (excluding the marker comments
+        themselves) — matching ``BaseExtractor.find_markers_in_node``.
+        """
         markers: Dict[str, Tuple[int, int]] = {}
 
         # Query for comments
@@ -304,7 +309,8 @@ class MacroFinder:
                     if len(parts) > 1:
                         marker_name = parts[1].strip()
                         current_marker = marker_name
-                        start_line = comment_node.start_point.row + 1
+                        # Line AFTER the //@@start comment (1-based)
+                        start_line = comment_node.start_point.row + 2
 
                 # Check for end marker
                 elif "//@@end" in text and current_marker and start_line is not None:
@@ -312,7 +318,8 @@ class MacroFinder:
                     if len(parts) > 1:
                         end_marker = parts[1].strip()
                         if end_marker == current_marker:
-                            end_line = comment_node.start_point.row + 1
+                            # Line BEFORE the //@@end comment (1-based)
+                            end_line = comment_node.start_point.row
                             markers[current_marker] = (start_line, end_line)
                             current_marker = None
                             start_line = None
@@ -383,17 +390,10 @@ class MacroFinder:
 
         start_line, end_line = info["markers"][marker_name]
 
-        # Convert to source-relative lines
+        # Convert to source-relative lines. ``find_markers_in_node`` already
+        # returns the inclusive code range BETWEEN the marker comments.
         lines = source.decode("utf8").splitlines()
-
-        # Extract the marked section
         section_lines = lines[start_line - 1 : end_line]
-
-        # Remove the marker comments themselves
-        if section_lines and "//@@start" in section_lines[0]:
-            section_lines = section_lines[1:]
-        if section_lines and "//@@end" in section_lines[-1]:
-            section_lines = section_lines[:-1]
 
         return "\n".join(section_lines)
 

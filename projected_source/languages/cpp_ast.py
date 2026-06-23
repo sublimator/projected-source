@@ -80,12 +80,28 @@ def find_following_body(decl_node: Node) -> Optional[Node]:
 
 
 def extract_operator_name(op_node: Node) -> str:
-    """Extract an operator name like ``operator+``, ``operator==``, ``operator[]``."""
+    """Extract an operator name like ``operator+``, ``operator==``, ``operator[]``.
+
+    Keyword operators (``operator new``, ``operator delete``, ``operator co_await``)
+    require a single space between adjacent word-like tokens so the joined name
+    stays readable and matches its canonical spelling.
+    """
     parts: List[str] = []
     for child in op_node.children:
         if child.text:
             parts.append(node_text(child))
-    return "".join(parts)
+
+    result = ""
+    for part in parts:
+        if (
+            result
+            and part
+            and (result[-1].isalnum() or result[-1] == "_")
+            and (part[0].isalnum() or part[0] == "_")
+        ):
+            result += " "
+        result += part
+    return result
 
 
 def extract_template_type_name(tt_node: Node) -> Optional[str]:
@@ -128,6 +144,31 @@ def extract_qualified_parts(qnode: Node) -> List[str]:
         if not found_nested:
             break
     return parts
+
+
+def unwrap_to_function_declarator(node: Optional[Node]) -> Optional[Node]:
+    """Walk through pointer/reference declarator wrappers to find a ``function_declarator``.
+
+    tree-sitter-cpp wraps ``function_declarator`` inside ``pointer_declarator`` or
+    ``reference_declarator`` when the return type contains ``*`` or ``&``. Returns
+    the inner ``function_declarator`` if found, otherwise ``None``.
+    """
+    current: Optional[Node] = node
+    while current:
+        if current.type == "function_declarator":
+            return current
+        elif current.type == "pointer_declarator":
+            current = current.child_by_field_name("declarator")
+        elif current.type == "reference_declarator":
+            func_decl = None
+            for child in current.children:
+                if child.type == "function_declarator":
+                    func_decl = child
+                    break
+            current = func_decl
+        else:
+            return None
+    return None
 
 
 def extract_function_name_and_qualifiers(declarator: Node, context_stack: List[str]) -> Tuple[str, List[str]]:

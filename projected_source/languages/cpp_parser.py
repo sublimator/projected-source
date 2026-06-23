@@ -20,6 +20,7 @@ from .cpp_ast import (
     find_following_body,
     node_to_result,
     qualifiers_match,
+    unwrap_to_function_declarator,
 )
 from .extraction_result import ExtractionResult
 from .utils import node_text
@@ -61,6 +62,12 @@ class SimpleCppParser:
         logger.info(f"  Qualifiers: {qualifiers}")
         logger.info(f"  Looking for node types: {node_types}")
 
+        # Forward-declaration fallback: if the only match is a bare
+        # ``class Foo;`` / ``struct Foo;`` / ``enum Foo;`` (no body), remember it
+        # but keep searching for a real definition. Returned only if nothing
+        # with a body matched. See FINDING 2 in the bug list.
+        forward_decl_fallback: List[Node] = []
+
         # Walk the tree to find the target node
         def find_node(node, context_stack=None, depth=0):
             if context_stack is None:
@@ -97,57 +104,71 @@ class SimpleCppParser:
                         result = find_node(decl, new_context, depth + 1)
                         if result:
                             return result
+                # Do NOT fall through to the generic recursion below — the
+                # body was already searched with the correct context.
+                return None
 
             # Check for class, struct, or enum definitions
             elif node.type in ["class_specifier", "struct_specifier", "enum_specifier"]:
                 # Get the class/struct/enum name
                 class_name = None
                 class_qualifiers = []
+                has_body = False
                 for child in node.children:
-                    if child.type == "type_identifier":
-                        class_name = node_text(child)
-                        break
-                    elif child.type == "qualified_identifier":
-                        # Handle class HttpServer::Impl pattern
-                        parts = []
-                        current_qi = child
-                        while current_qi and current_qi.type == "qualified_identifier":
-                            found_nested = False
-                            for qi_child in current_qi.children:
-                                if qi_child.type in ["namespace_identifier", "identifier"]:
-                                    parts.append(node_text(qi_child))
-                                elif qi_child.type == "type_identifier":
-                                    parts.append(node_text(qi_child))
-                                elif qi_child.type == "qualified_identifier":
-                                    current_qi = qi_child
-                                    found_nested = True
+                    if class_name is None:
+                        if child.type == "type_identifier":
+                            class_name = node_text(child)
+                        elif child.type == "qualified_identifier":
+                            # Handle class HttpServer::Impl pattern
+                            parts = []
+                            current_qi = child
+                            while current_qi and current_qi.type == "qualified_identifier":
+                                found_nested = False
+                                for qi_child in current_qi.children:
+                                    if qi_child.type in ["namespace_identifier", "identifier"]:
+                                        parts.append(node_text(qi_child))
+                                    elif qi_child.type == "type_identifier":
+                                        parts.append(node_text(qi_child))
+                                    elif qi_child.type == "qualified_identifier":
+                                        current_qi = qi_child
+                                        found_nested = True
+                                        break
+                                if not found_nested:
                                     break
-                            if not found_nested:
-                                break
-                        if parts:
-                            class_name = parts[-1]
-                            class_qualifiers = parts[:-1]
-                        break
+                            if parts:
+                                class_name = parts[-1]
+                                class_qualifiers = parts[:-1]
+                    if child.type in ("field_declaration_list", "enumerator_list"):
+                        has_body = True
 
-                logger.debug(f"{indent}Found {node.type}: {class_name}")
+                logger.debug(f"{indent}Found {node.type}: {class_name} has_body={has_body}")
 
                 # Check if this is the struct/class we're looking for
                 full_context = context_stack + class_qualifiers
                 if node.type in node_types and class_name == target_leaf_name:
-                    # Check if qualifiers match
-                    if not qualifiers:
-                        logger.info(f"{indent}  MATCH FOUND (no qualifiers required)")
-                        return node
-                    elif full_context == qualifiers:
-                        logger.info(f"{indent}  MATCH FOUND (exact qualifier match)")
-                        return node
-                    elif len(full_context) >= len(qualifiers):
-                        if full_context[-len(qualifiers) :] == qualifiers:
-                            logger.info(f"{indent}  MATCH FOUND (suffix qualifier match)")
+                    qualifier_ok = (
+                        not qualifiers
+                        or full_context == qualifiers
+                        or (
+                            len(full_context) >= len(qualifiers)
+                            and full_context[-len(qualifiers) :] == qualifiers
+                        )
+                    )
+                    if qualifier_ok:
+                        if has_body:
+                            logger.info(f"{indent}  MATCH FOUND (with body)")
                             return node
+                        else:
+                            # Forward declaration: remember as fallback but
+                            # keep searching for the real definition.
+                            if not forward_decl_fallback:
+                                forward_decl_fallback.append(node)
+                            logger.debug(
+                                f"{indent}  Forward-decl match recorded; continuing search"
+                            )
 
                 # Recurse into the class/struct body with updated context
-                if class_name:
+                if class_name and has_body:
                     new_context = full_context + [class_name]
                     for child in node.children:
                         if child.type == "field_declaration_list":
@@ -157,13 +178,21 @@ class SimpleCppParser:
                                 result = find_node(member, new_context, depth + 1)
                                 if result:
                                     return result
+                # Do NOT fall through to the generic recursion below — we
+                # already searched the body with the correct context.
+                return None
 
             # Check for extern function declarations (declaration with function_declarator)
             elif node.type == "declaration" and "function_definition" in node_types:
                 for child in node.children:
-                    if child.type == "function_declarator":
+                    # tree-sitter-cpp wraps function_declarator inside
+                    # pointer_declarator/reference_declarator when the return
+                    # type is a pointer/reference — accept both.
+                    if child.type in ("function_declarator", "pointer_declarator", "reference_declarator"):
+                        if unwrap_to_function_declarator(child) is None:
+                            continue
                         found_name, found_qualifiers = extract_function_name_and_qualifiers(child, context_stack)
-                        if found_name == target_leaf_name:
+                        if found_name and found_name == target_leaf_name:
                             if not qualifiers:
                                 return node
                             elif qualifiers_match(found_qualifiers, qualifiers):
@@ -330,11 +359,13 @@ class SimpleCppParser:
 
             # Check for field declarations (class method declarations in headers)
             elif node.type == "field_declaration" and "function_definition" in node_types:
-                # field_declaration can contain a function_declarator for method declarations
+                # field_declaration can contain a function_declarator for method declarations,
+                # possibly wrapped in pointer_declarator/reference_declarator when the return
+                # type is a pointer/reference (e.g. ``int* method()``, ``Foo& method()``).
                 declarator = node.child_by_field_name("declarator")
-                if declarator and declarator.type == "function_declarator":
+                if declarator and unwrap_to_function_declarator(declarator) is not None:
                     found_name, found_qualifiers = extract_function_name_and_qualifiers(declarator, context_stack)
-                    if found_name == target_leaf_name:
+                    if found_name and found_name == target_leaf_name:
                         if not qualifiers:
                             logger.info(f"{indent}  MATCH FOUND (no qualifiers required)")
                             return node
@@ -365,7 +396,11 @@ class SimpleCppParser:
 
             return None
 
-        return find_node(root)
+        result = find_node(root)
+        if result is not None:
+            return result
+        # Fall back to a forward declaration only when no full definition was found.
+        return forward_decl_fallback[0] if forward_decl_fallback else None
 
     def _find_all_nodes_by_qualified_name(self, source_code: bytes, target_name: str, node_types: list) -> List[Node]:
         """
@@ -465,21 +500,26 @@ class SimpleCppParser:
             # Check for extern function declarations (declaration with function_declarator)
             elif node.type == "declaration" and "function_definition" in node_types:
                 for child in node.children:
-                    if child.type == "function_declarator":
+                    # Accept function_declarator wrapped in pointer/reference declarators
+                    # for pointer/reference return types.
+                    if child.type in ("function_declarator", "pointer_declarator", "reference_declarator"):
+                        if unwrap_to_function_declarator(child) is None:
+                            continue
                         found_name, found_qualifiers = extract_function_name_and_qualifiers(child, context_stack)
-                        if found_name == target_leaf_name:
+                        if found_name and found_name == target_leaf_name:
                             if qualifiers_match(found_qualifiers, qualifiers):
                                 results.append(node)
                         break
 
             # Check for field declarations (class method declarations in headers)
             elif node.type == "field_declaration" and "function_definition" in node_types:
-                # field_declaration can contain a function_declarator for method declarations
+                # field_declaration can contain a function_declarator for method declarations,
+                # possibly wrapped in pointer/reference declarators for pointer/reference returns.
                 declarator = node.child_by_field_name("declarator")
-                if declarator and declarator.type == "function_declarator":
+                if declarator and unwrap_to_function_declarator(declarator) is not None:
                     found_name, found_qualifiers = extract_function_name_and_qualifiers(declarator, context_stack)
 
-                    if found_name == target_leaf_name:
+                    if found_name and found_name == target_leaf_name:
                         if qualifiers_match(found_qualifiers, qualifiers):
                             results.append(node)
 
@@ -538,12 +578,14 @@ class SimpleCppParser:
                     target_node = child
                     break
 
-        # Handle field_declaration and declaration (extern/forward declarations)
-        # These don't have a "declarator" field - function_declarator is a direct child
+        # Handle field_declaration and declaration (extern/forward declarations).
+        # function_declarator may be a direct child OR wrapped in pointer/reference
+        # declarators when the return type is a pointer/reference.
         if target_node.type in ("field_declaration", "declaration"):
             for child in target_node.children:
-                if child.type == "function_declarator":
-                    params_node = child.child_by_field_name("parameters")
+                func_decl = unwrap_to_function_declarator(child)
+                if func_decl is not None:
+                    params_node = func_decl.child_by_field_name("parameters")
                     if params_node:
                         return node_text(params_node)
             return ""
@@ -794,7 +836,9 @@ class SimpleCppParser:
 
             if node.type == "field_declaration":
                 declarator = node.child_by_field_name("declarator")
-                if declarator and declarator.type == "function_declarator":
+                # Accept function_declarator possibly wrapped in pointer/reference
+                # declarators for pointer/reference return types.
+                if declarator and unwrap_to_function_declarator(declarator) is not None:
                     name, qualifiers = extract_function_name_and_qualifiers(declarator, context_stack)
                     if name:
                         qualified = "::".join(qualifiers + [name]) if qualifiers else name
@@ -840,9 +884,13 @@ class SimpleCppParser:
                 return
 
             if node.type == "declaration":
-                # Check for extern/forward function declarations (function_declarator child)
+                # Check for extern/forward function declarations. The function_declarator
+                # may be a direct child OR wrapped in pointer/reference declarators when
+                # the return type is a pointer/reference (e.g. ``extern int* foo();``).
                 for child in node.children:
-                    if child.type == "function_declarator":
+                    if child.type in ("function_declarator", "pointer_declarator", "reference_declarator"):
+                        if unwrap_to_function_declarator(child) is None:
+                            continue
                         name, qualifiers = extract_function_name_and_qualifiers(child, context_stack)
                         if name:
                             qualified = "::".join(qualifiers + [name]) if qualifiers else name
