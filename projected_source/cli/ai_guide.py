@@ -126,6 +126,14 @@ projected-source render docs/ -V auto --strict     # exit 1 if uncovered
 {{{{ code('src/message.rs', enum='MessageType') }}}}
 {{{{ code('src/config.rs', var='MAX_SIZE') }}}}
 
+{{# Lean 4 — def, theorem, example, abbrev, instance all answer function= #}}
+{{{{ code('Proofs.lean', function='selectEntropyTier') }}}}
+{{{{ code('Proofs.lean', function='no_unl_report_selects_fallback') }}}}  {{# theorem #}}
+{{{{ code('Proofs.lean', function='XahauConsensus.selectEntropyTier') }}}}  {{# namespace-qualified #}}
+{{{{ code('Proofs.lean', function='Point.origin') }}}}  {{# dotted name is one identifier in Lean #}}
+{{{{ code('Proofs.lean', struct='EntropyTier') }}}}  {{# inductive or structure #}}
+{{{{ code('Proofs.lean', var='secret') }}}}  {{# axiom / opaque / constant / initialize #}}
+
 {{# Options #}}
 {{{{ code('src/file.cpp', function='foo', github=False) }}}}      {{# no permalink #}}
 {{{{ code('src/file.cpp', function='foo', line_numbers=False) }}}} {{# no line nums #}}
@@ -201,6 +209,13 @@ code here
 //@@end section-name
 ```
 
+```lean
+-- Lean 4
+-- @@start section-name
+code here
+-- @@end section-name
+```
+
 ```python
 # Python
 #@@start section-name
@@ -229,7 +244,8 @@ Example:
 
 1. **Prefer symbolic refs** - `function=`, `struct=`, `message=`, `enum=` over markers/lines
 2. **Use `signature=` for C++ overloads** - e.g., `function='onMessage', signature='TMProposeSet'`
-3. **Dotted paths for methods** - `function='Class.method'` works in Java, TypeScript, Python, Rust
+3. **Dotted paths for methods** - `function='Class.method'` works in Java, TypeScript, Python, Rust.
+   In Lean, dotted names are single identifiers (`def Point.origin`) — same syntax, different mechanism.
 4. **Use `list-functions`** to discover extractable symbols in any supported file
    (add `--include-tests` to surface items inside Rust `#[cfg(test)]` modules)
 5. **Use `ref=`** to extract code from any git branch, tag, or commit
