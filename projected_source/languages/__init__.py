@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .cpp import CppExtractor
 from .java import JavaExtractor
+from .lean import LeanExtractor
 from .proto import ProtoExtractor
 from .python import PythonExtractor
 from .rust import RustExtractor
@@ -36,6 +37,7 @@ EXTRACTORS = {
     ".cts": TypeScriptExtractor,  # TypeScript CommonJS module
     ".java": JavaExtractor,  # Java
     ".rs": RustExtractor,  # Rust
+    ".lean": LeanExtractor,  # Lean 4
 }
 
 
