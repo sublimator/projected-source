@@ -240,13 +240,24 @@ class GitHubIntegration:
         return self._commit_hash
 
     def is_file_dirty(self, file_path: Path) -> bool:
-        """Check if a file has uncommitted changes."""
+        """Check if a file has uncommitted changes (including untracked files)."""
         try:
             # Get path relative to repo
             if file_path.is_absolute():
                 rel_path = file_path.relative_to(self.repo_path)
             else:
                 rel_path = file_path
+
+            # `git diff` ignores untracked files, so a file that exists on disk
+            # but isn't tracked would otherwise look clean. Detect that first.
+            tracked = subprocess.run(
+                ["git", "ls-files", "--error-unmatch", "--", str(rel_path)],
+                cwd=self.repo_path,
+                capture_output=True,
+            )
+            if tracked.returncode != 0:
+                abs_path = file_path if file_path.is_absolute() else self.repo_path / rel_path
+                return abs_path.exists()
 
             # Check if file has changes (staged or unstaged)
             result = subprocess.run(
@@ -363,15 +374,22 @@ class GitHubIntegration:
                     display_start = start_line
                     display_end = end_line
 
+                # URL anchor must use committed line numbers
                 if committed_end and committed_end != committed_start:
                     url += f"#L{committed_start}-L{committed_end}"
-                    display = f"{rel_path}:{display_start}-{display_end}"
                     if is_dirty:
                         logger.debug(
                             f"Dirty file: mapped lines {start_line}-{end_line} → {committed_start}-{committed_end}"
                         )
                 else:
                     url += f"#L{committed_start}"
+
+                # Display label uses whichever line space we're showing — when
+                # display_committed_lines=False, working-copy lines may span a
+                # range even if their committed counterparts collapse to one.
+                if display_end is not None and display_end != display_start:
+                    display = f"{rel_path}:{display_start}-{display_end}"
+                else:
                     display = f"{rel_path}:{display_start}"
             else:
                 display = str(rel_path)
