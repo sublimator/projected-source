@@ -133,3 +133,29 @@ class TestNamespaceWalk:
         # `Outer.Inner.deeplyNested` by suffix.
         text, _, _ = extractor.extract_function(FIXTURE, "Inner.deeplyNested")
         assert "deeplyNested" in text
+
+
+class TestMutualBlock:
+    """The vendored grammar doesn't recognize ``mutual ... end`` blocks — they
+    appear as a top-level ERROR + bare ``end`` sibling pair. Without special
+    handling, the mutual's closing ``end`` would pop the enclosing namespace
+    scope, so declarations inside *and after* the mutual would lose their
+    namespace prefix.
+    """
+
+    def test_mutual_members_keep_namespace_prefix(self, extractor):
+        names = {s["name"] for s in extractor.list_symbols(FIXTURE)}
+        assert "MutualNs.evenN" in names
+        assert "MutualNs.oddN" in names
+
+    def test_post_mutual_decl_keeps_namespace_prefix(self, extractor):
+        names = {s["name"] for s in extractor.list_symbols(FIXTURE)}
+        assert "MutualNs.afterMutual" in names
+
+    def test_mutual_member_extractable_by_qualified_name(self, extractor):
+        text, _, _ = extractor.extract_function(FIXTURE, "MutualNs.evenN")
+        assert "def evenN" in text
+
+    def test_post_mutual_decl_extractable_by_qualified_name(self, extractor):
+        text, _, _ = extractor.extract_function(FIXTURE, "MutualNs.afterMutual")
+        assert "def afterMutual" in text

@@ -51,3 +51,21 @@ def deeplyNested : String := "hi"
 
 end Inner
 end Outer
+
+namespace MutualNs
+
+mutual
+
+def evenN : Nat → Bool
+  | 0 => true
+  | n + 1 => oddN n
+
+def oddN : Nat → Bool
+  | 0 => false
+  | n + 1 => evenN n
+
+end
+
+def afterMutual : Nat := 42
+
+end MutualNs

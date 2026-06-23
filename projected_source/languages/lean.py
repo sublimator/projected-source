@@ -167,8 +167,16 @@ class LeanExtractor(BaseExtractor):
 
         Maintains a scope stack across sibling ``namespace`` / ``section`` / ``end``
         nodes so qualified names reflect lexical nesting.
+
+        The vendored grammar does not recognize ``mutual`` blocks — they appear
+        as a top-level ``ERROR`` node containing just the keyword ``mutual``,
+        followed by the mutual's declarations as siblings, then a bare ``end``.
+        We track those pending mutual-ends and swallow them so the mutual's
+        closing ``end`` doesn't get mistaken for a ``namespace`` / ``section``
+        terminator and prematurely pop the scope stack.
         """
         scope: List[str] = []
+        pending_mutual_ends = 0
         for child in root.children:
             ctype = child.type
             if ctype == "namespace":
@@ -176,8 +184,12 @@ class LeanExtractor(BaseExtractor):
             elif ctype == "section":
                 # sections may be anonymous; push a placeholder either way so end pops cleanly
                 scope.append(_name_text(child) or "")
+            elif ctype == "ERROR" and _is_mutual_marker(child):
+                pending_mutual_ends += 1
             elif ctype == "end":
-                if scope:
+                if pending_mutual_ends > 0 and _is_bare_end(child):
+                    pending_mutual_ends -= 1
+                elif scope:
                     scope.pop()
             elif ctype == "declaration":
                 inner = _declaration_inner(child)
@@ -191,6 +203,27 @@ class LeanExtractor(BaseExtractor):
 
 
 # --- module-level helpers ------------------------------------------------------
+
+
+_MUTUAL_MARKER = re.compile(r"^\s*mutual\b")
+
+
+def _is_mutual_marker(node: Node) -> bool:
+    """True if an ``ERROR`` node represents an unrecognized ``mutual`` keyword.
+
+    The vendored grammar doesn't know about Lean's ``mutual`` blocks, so the
+    keyword shows up as a top-level ``ERROR`` whose text starts with ``mutual``.
+    """
+    text = node.text.decode("utf-8", errors="replace") if node.text else ""
+    return bool(_MUTUAL_MARKER.match(text))
+
+
+def _is_bare_end(node: Node) -> bool:
+    """True if an ``end`` node has no trailing identifier (i.e. ``end`` not ``end Foo``)."""
+    for child in node.children:
+        if child.type == "identifier":
+            return False
+    return True
 
 
 def _declaration_inner(decl: Node) -> Optional[Node]:
