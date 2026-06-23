@@ -314,13 +314,13 @@ class ProtoExtractor(BaseExtractor):
             start_match = start_pattern.match(line)
             if start_match:
                 name = start_match.group(1)
-                open_markers[name] = i + 1
+                open_markers[name] = i + 2  # line after the marker (1-indexed)
 
             end_match = end_pattern.match(line)
             if end_match:
                 name = end_match.group(1)
                 if name in open_markers:
-                    markers[name] = (open_markers[name], i + 1)
+                    markers[name] = (open_markers[name], i)  # line before the marker
                     del open_markers[name]
 
         return markers

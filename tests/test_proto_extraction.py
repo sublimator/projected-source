@@ -5,6 +5,7 @@ dependency and compiled from source at install time, so the loader path gets
 its own coverage here alongside the extraction smoke tests.
 """
 
+import tempfile
 import warnings
 from pathlib import Path
 
@@ -62,3 +63,29 @@ class TestProtoExtraction:
         """ripple.proto uses proto2 syntax — the grammar must handle it."""
         tree = extractor._parser.parse(FIXTURE.read_bytes())
         assert not tree.root_node.has_error
+
+    def test_marker_line_range_excludes_marker_comments(self, extractor):
+        """list_symbols must report marker ranges that exclude the //@@ comment lines."""
+        proto_source = b"""syntax = "proto3";
+
+//@@start example1
+message Foo {
+  string name = 1;
+}
+//@@end example1
+"""
+        with tempfile.NamedTemporaryFile(suffix=".proto", delete=False) as f:
+            f.write(proto_source)
+            temp_path = Path(f.name)
+
+        try:
+            symbols = extractor.list_symbols(temp_path)
+            markers = [s for s in symbols if s["kind"] == "marker"]
+            by_name = {m["name"]: m for m in markers}
+            assert "example1" in by_name
+            # Lines are 1-based, and we want the content between markers.
+            # Line 3 is //@@start, line 7 is //@@end, so content is lines 4-6.
+            assert by_name["example1"]["line"] == 4
+            assert by_name["example1"]["end_line"] == 6
+        finally:
+            temp_path.unlink()
