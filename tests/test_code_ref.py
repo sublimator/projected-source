@@ -203,9 +203,18 @@ class TestRefExtractFromHistory:
         """ChangesSet should NOT be affected by ref extractions."""
         from projected_source.core.changes_set import ChangesSet
 
+        target = REPO_ROOT / "projected_source/languages/__init__.py"
+
         changes = ChangesSet()
-        # Add a fake region
-        changes.add(REPO_ROOT / "projected_source/languages/__init__.py", 1, 50)
+        # Add a fake region that fully encloses any plausible EXTRACTORS
+        # extent in the historical commit, so that a buggy subtract() call
+        # would visibly shrink/split it.
+        changes.add(target, 1, 50)
+
+        # Snapshot the regions BEFORE rendering so we can detect any
+        # subtraction the renderer performs.
+        before_regions = list(changes.uncovered())
+        before_len = len(changes)
 
         template = tmp_path / "doc.md.j2"
         template.write_text(
@@ -215,5 +224,14 @@ class TestRefExtractFromHistory:
 
         renderer = TemplateRenderer(template_dir=tmp_path, repo_path=REPO_ROOT, changes_set=changes)
         renderer.render_template("doc.md.j2")
-        # Changes should NOT be subtracted — ref extraction doesn't cover HEAD changes
+
+        # Changes must be completely unchanged — ref extraction doesn't
+        # cover HEAD changes, so subtract() must NOT have been called.
+        after_regions = list(changes.uncovered())
+        assert len(changes) == before_len, (
+            f"ref extraction modified changes_set: before={before_regions}, after={after_regions}"
+        )
+        assert [(r.file_path, r.start_line, r.end_line) for r in after_regions] == [
+            (r.file_path, r.start_line, r.end_line) for r in before_regions
+        ]
         assert not changes.is_complete()

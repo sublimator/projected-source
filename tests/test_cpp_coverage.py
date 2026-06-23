@@ -84,12 +84,13 @@ class TestFindClassOrNamespace:
 
     def test_query_error_returns_none(self, extractor):
         """Query fails gracefully and returns None."""
-        # The current query has a known issue with newer tree-sitter
-        # This exercises the except path (line 386)
+        # The current query has a known issue ("Impossible pattern") with
+        # newer tree-sitter-cpp versions, so the except path on line 386 is
+        # hit and the function returns None. This test exercises that
+        # fallback: even with a class that *does* exist in the source, the
+        # query exception path must return None rather than raising.
         result = extractor.find_class_or_namespace(COMPLETE, "SimpleClass")
-        # Result may be None if query fails — that's the fallback path
-        # Just verify it doesn't raise
-        assert result is None or result is not None
+        assert result is None
 
 
 # ==================== MacroDefinitionFinder ====================
