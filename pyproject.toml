@@ -20,7 +20,6 @@ dependencies = [
     "gitpython>=3.1.45",
     "tree-sitter-typescript>=0.23.2",
     "tree-sitter-java>=0.23.5",
-    "tree-sitter-cmake>=0.7.2.post1",
     "tree-sitter-rust>=0.23.2",
     "tree-sitter-proto",
 ]
@@ -30,6 +29,7 @@ projected-source = "projected_source.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["projected_source"]
+artifacts = ["projected_source/languages/lean_grammar/_binding*.so"]
 
 [tool.hatch.build.hooks.custom]
 path = "hatch_build.py"
