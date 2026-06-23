@@ -52,10 +52,11 @@ class CodeContextExtension(Extension):
             self.environment.globals["code_root"] = root
         if ref is not None:
             self.environment.globals["code_ref"] = ref
-        rv = caller()
-        self.environment.globals["code_root"] = old_root
-        self.environment.globals["code_ref"] = old_ref
-        return rv
+        try:
+            return caller()
+        finally:
+            self.environment.globals["code_root"] = old_root
+            self.environment.globals["code_ref"] = old_ref
 
 
 def _collect_error_fixture(file_path: Path, error: str, template_context: str = None):
@@ -173,6 +174,7 @@ class TemplateRenderer:
             {{ code('src/proto/file.proto', enum='MyEnum') }}
         """
         tmp_file = None
+        resolved_path: Optional[Path] = None
         try:
             # Apply root prefix: per-call root= overrides context code_root
             code_root = root or str(self.env.globals.get("code_root", ""))
@@ -323,7 +325,13 @@ class TemplateRenderer:
 
             # Track this region as covered if we have a ChangesSet
             if self.changes_set is not None and not active_ref:
-                self.changes_set.subtract(display_path, start_line, end_line)
+                # changes_set holds HEAD-relative line numbers (built from
+                # 'git diff base..HEAD'), but start_line/end_line came from
+                # the working tree. Translate before subtracting so uncommitted
+                # edits above the extracted region don't shift the wrong rows.
+                committed_start = self.github.map_to_committed_line(display_path, start_line)
+                committed_end = self.github.map_to_committed_line(display_path, end_line)
+                self.changes_set.subtract(display_path, committed_start, committed_end)
 
             # Remap line numbers if requested (for sharing docs from dirty files)
             display_start = start_line
@@ -386,7 +394,8 @@ class TemplateRenderer:
             error_msg = f"❌ **ERROR**: {e}"
             logger.error(f"Code extraction failed: {e}")
             # Collect file as fixture if collection is enabled
-            _collect_error_fixture(resolved_path, str(e))
+            if resolved_path is not None:
+                _collect_error_fixture(resolved_path, str(e))
             return error_msg
 
         finally:
@@ -404,6 +413,10 @@ class TemplateRenderer:
         macro_definition: str = None,
         lines: Tuple[int, int] = None,
         marker: str = None,
+        signature: str = None,
+        message: str = None,
+        enum: str = None,
+        service: str = None,
         ref: str = None,
     ) -> str:
         """
@@ -432,7 +445,9 @@ class TemplateRenderer:
             resolved_path = self.repo_path / resolved_path
 
         # If no extraction spec, ignore entire file
-        has_spec = any([function, struct, var, function_macro, macro_definition, lines, marker])
+        has_spec = any(
+            [function, struct, var, function_macro, macro_definition, lines, marker, message, enum, service]
+        )
         if not has_spec:
             # Ignore all lines (use a large range)
             self.changes_set.subtract(resolved_path, 1, 999999)
@@ -462,15 +477,25 @@ class TemplateRenderer:
             extractor = get_extractor(extract_path)
 
             if function:
-                _, start_line, end_line = extractor.extract_function(extract_path, function)
+                _, start_line, end_line = extractor.extract_function(extract_path, function, signature)
             elif function_macro:
                 macro_spec = {"name": function_macro} if isinstance(function_macro, str) else function_macro
                 _, start_line, end_line = extractor.extract_function_macro(extract_path, macro_spec)
             elif macro_definition:
                 _, start_line, end_line = extractor.extract_macro_definition(extract_path, macro_definition)
-            elif struct or var:
-                name = struct or var
-                _, start_line, end_line = extractor.extract_struct(extract_path, name)
+            elif var:
+                if hasattr(extractor, "extract_variable"):
+                    _, start_line, end_line = extractor.extract_variable(extract_path, var)
+                else:
+                    _, start_line, end_line = extractor.extract_struct(extract_path, var)
+            elif struct:
+                _, start_line, end_line = extractor.extract_struct(extract_path, struct)
+            elif message:
+                _, start_line, end_line = extractor.extract_message(extract_path, message)
+            elif enum:
+                _, start_line, end_line = extractor.extract_enum(extract_path, enum)
+            elif service:
+                _, start_line, end_line = extractor.extract_service(extract_path, service)
             elif marker:
                 _, start_line, end_line = extractor.extract_marker(extract_path, marker)
             elif lines:

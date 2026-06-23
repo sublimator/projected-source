@@ -112,6 +112,10 @@ class ChangesSet:
             if line.startswith("+++ b/"):
                 file_path = line[6:]  # Strip "+++ b/"
                 current_file = repo_path / file_path
+            # Deleted-file sentinel: '+++ /dev/null' — skip hunk lines so we
+            # don't spuriously record additions against the previous file.
+            elif line.startswith("+++ ") and "/dev/null" in line:
+                current_file = None
 
             # Hunk header: @@ -old_start,old_count +new_start,new_count @@
             elif line.startswith("@@"):

@@ -218,6 +218,172 @@ class TestCodeContext:
         renderer.render_template("doc.md.j2")
         assert changes.is_complete()
 
+    def test_ignore_changes_accepts_message_param(self, tmp_path):
+        """ignore_changes(file, message='X') must not raise TypeError."""
+        py_file = tmp_path / "mod.py"
+        py_file.write_text("def foo():\n    pass\n")
+
+        changes = ChangesSet()
+        changes.add(py_file, 1, 2)
+
+        # Use a proto-style call - we only care that it doesn't raise TypeError
+        # at the function-signature level. The extractor may fail (no extractor
+        # for .py with message=), but ignore_changes catches that internally.
+        template = tmp_path / "doc.md.j2"
+        template.write_text("{{ ignore_changes('mod.py', message='Foo') }}\n")
+
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path, changes_set=changes)
+        # Must not raise TypeError about unexpected keyword 'message'.
+        renderer.render_template("doc.md.j2")
+
+    def test_ignore_changes_accepts_signature_param(self, tmp_path):
+        """ignore_changes(file, function='X', signature='Y') must not raise TypeError."""
+        py_file = tmp_path / "mod.py"
+        py_file.write_text("def foo():\n    pass\n")
+
+        changes = ChangesSet()
+        changes.add(py_file, 1, 2)
+
+        template = tmp_path / "doc.md.j2"
+        template.write_text(
+            "{{ ignore_changes('mod.py', function='foo', signature='whatever') }}\n"
+        )
+
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path, changes_set=changes)
+        # Must not raise TypeError about unexpected keyword 'signature'.
+        renderer.render_template("doc.md.j2")
+        # The function was extracted and subtracted, covering lines 1-2.
+        assert changes.is_complete()
+
+
+class TestCodeContextExceptionSafety:
+    def test_code_context_restores_globals_on_exception(self, tmp_path):
+        """{% code_context %} must restore code_root even if caller() raises."""
+        (tmp_path / "outer.py").write_text("def outer():\n    pass\n")
+
+        # The inner code() raises (function does not exist), which surfaces an
+        # ERROR string in the rendered output rather than an exception. To
+        # trigger a real raise inside the block, we use a Jinja construct
+        # that raises during template execution: division by zero.
+        template = tmp_path / "doc.md.j2"
+        template.write_text(
+            "{% code_context root='nested/path' %}\n"
+            "{{ 1 / 0 }}\n"
+            "{% endcode_context %}\n"
+        )
+
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+        try:
+            renderer.render_template("doc.md.j2")
+        except Exception:
+            pass  # expected — we just need the finally clause to have run
+
+        # If the bug exists, code_root remains 'nested/path' and the next
+        # code() call resolves outer.py incorrectly.
+        template2 = tmp_path / "doc2.md.j2"
+        template2.write_text("{{ code('outer.py', function='outer', github=False) }}\n")
+        result = renderer.render_template("doc2.md.j2")
+        assert "def outer():" in result, (
+            f"code_root leaked from prior code_context block; result:\n{result}"
+        )
+
+    def test_code_context_restores_ref_on_exception(self, tmp_path):
+        """{% code_context ref=... %} must restore code_ref even if caller() raises."""
+        (tmp_path / "outer.py").write_text("def outer():\n    pass\n")
+
+        template = tmp_path / "doc.md.j2"
+        template.write_text(
+            "{% code_context ref='nonexistent-ref' %}\n"
+            "{{ 1 / 0 }}\n"
+            "{% endcode_context %}\n"
+        )
+
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+        try:
+            renderer.render_template("doc.md.j2")
+        except Exception:
+            pass
+
+        # If the bug exists, code_ref leaks and the next code() call tries
+        # 'git show nonexistent-ref:outer.py'.
+        template2 = tmp_path / "doc2.md.j2"
+        template2.write_text("{{ code('outer.py', function='outer', github=False) }}\n")
+        result = renderer.render_template("doc2.md.j2")
+        assert "def outer():" in result, (
+            f"code_ref leaked from prior code_context block; result:\n{result}"
+        )
+
+
+class TestCodeErrorHandling:
+    def test_code_with_invalid_file_path_returns_error_not_crash(self, tmp_path):
+        """A bad file_path argument must surface an ERROR string, not crash with UnboundLocalError."""
+        template = tmp_path / "doc.md.j2"
+        # Pass a non-string value (a list) for file_path. Path(file_path)
+        # will raise TypeError, which fires before resolved_path is assigned.
+        # The except handler must not itself raise UnboundLocalError.
+        template.write_text("{{ code(some_list, function='foo', github=False) }}\n")
+
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+        # Pass a list as the file_path - Path() chokes on it during is_absolute().
+        result = renderer.render_template("doc.md.j2", some_list=["not", "a", "path"])
+        # Should produce an ERROR string from the except block, no UnboundLocalError.
+        assert "ERROR" in result
+
+
+def _init_remote_git_repo(path):
+    """Init a git repo with a fake github origin so permalinks work."""
+    _init_git_repo(path)
+    subprocess.check_call(
+        ["git", "remote", "add", "origin", "https://github.com/test/test.git"],
+        cwd=path,
+    )
+
+
+class TestChangesSetCoverageRespectsDirtyLines:
+    def test_subtract_uses_committed_line_numbers(self, tmp_path):
+        """code() must translate working-tree lines to HEAD lines before subtracting.
+
+        changes_set is built from HEAD-relative diff. When a file has uncommitted
+        edits above the extracted region, the working-tree line numbers differ
+        from HEAD line numbers — subtract() with raw working-tree lines removes
+        the wrong rows.
+        """
+        _init_git_repo(tmp_path)
+
+        py_file = tmp_path / "mod.py"
+        # Committed version: helper() at lines 1-2
+        py_file.write_text("def helper():\n    return 42\n")
+        _git_commit(tmp_path, "initial")
+
+        # Build the changes_set BEFORE any working-tree edits. We synthesize
+        # a coverage entry against HEAD lines 1-2 to mirror what from_diff
+        # would produce for these committed lines.
+        changes = ChangesSet()
+        changes.add(py_file, 1, 2)
+
+        # Now make uncommitted edits ABOVE helper(): add 3 blank/comment lines.
+        # helper() now lives at working-tree lines 4-5, while it's still at
+        # HEAD lines 1-2 in the changes_set.
+        py_file.write_text(
+            "# new comment 1\n"
+            "# new comment 2\n"
+            "# new comment 3\n"
+            "def helper():\n"
+            "    return 42\n"
+        )
+
+        template = tmp_path / "doc.md.j2"
+        template.write_text("{{ code('mod.py', function='helper', github=False) }}\n")
+
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path, changes_set=changes)
+        renderer.render_template("doc.md.j2")
+
+        # The bug: subtract(file, 4, 5) leaves HEAD lines 1-2 uncovered.
+        # The fix: subtract maps working-tree 4-5 back to HEAD 1-2 and covers them.
+        assert changes.is_complete(), (
+            f"Coverage didn't cover the HEAD region; uncovered={changes.uncovered()}"
+        )
+
 
 def _init_git_repo(path):
     """Initialize a git repo and make an initial commit."""

@@ -422,3 +422,58 @@ int helper() {
             if "test.cpp" in str(region.file_path):
                 # Any remaining regions shouldn't be in 5-8
                 assert not (region.start_line >= 5 and region.end_line <= 8)
+
+    def test_parse_diff_with_deleted_file_skips_dev_null(self, temp_git_repo):
+        """A '+++ /dev/null' header (deleted file) must not record adds against the previous file."""
+        # Name files so the kept (modified) file sorts BEFORE the deleted file
+        # in git's alphabetical diff output. The bug only manifests when the
+        # '+++ /dev/null' line appears AFTER current_file was set by a prior
+        # '+++ b/...' header — then the '+' prefix of '/dev/null' falls through
+        # to the addition branch and phantom-records against the prior file.
+        kept_file = temp_git_repo / "a_kept.cpp"
+        kept_file.write_text(
+            "int kept() {\n"
+            "    return 1;\n"
+            "}\n"
+        )
+        gone_file = temp_git_repo / "z_gone.cpp"
+        gone_file.write_text(
+            "int gone() {\n"
+            "    return 2;\n"
+            "}\n"
+        )
+        self.subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
+        self.subprocess.run(
+            ["git", "commit", "-m", "add two files"],
+            cwd=temp_git_repo,
+            capture_output=True,
+        )
+
+        # Now modify kept.cpp AND delete gone.cpp in a single commit. git diff
+        # will emit gone.cpp with '+++ /dev/null'. The buggy parser would
+        # treat the '+' lines of the deletion hunk as additions to kept.cpp.
+        kept_file.write_text(
+            "int kept() {\n"
+            "    return 99;\n"
+            "}\n"
+        )
+        gone_file.unlink()
+        self.subprocess.run(["git", "add", "-A"], cwd=temp_git_repo, capture_output=True)
+        self.subprocess.run(
+            ["git", "commit", "-m", "modify kept, delete gone"],
+            cwd=temp_git_repo,
+            capture_output=True,
+        )
+
+        cs = ChangesSet.from_diff(base="HEAD~1", repo_path=temp_git_repo)
+        regions = cs.uncovered()
+
+        # All recorded regions must belong to a_kept.cpp - no phantom rows from
+        # the deleted-file hunk getting attributed to it.
+        for region in regions:
+            assert "z_gone.cpp" not in str(region.file_path), f"deleted file regions leaked: {region}"
+            # a_kept.cpp only has 3 lines, so no region should reference lines > 3
+            if "a_kept.cpp" in str(region.file_path):
+                assert region.end_line <= 3, (
+                    f"phantom add recorded for a_kept.cpp beyond its length: {region}"
+                )
