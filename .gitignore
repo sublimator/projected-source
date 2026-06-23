@@ -9,3 +9,6 @@ tests/fixtures/collected/
 test-repo/
 .coverage
 bugs/
+
+# Compiled Lean tree-sitter binding (built by hatch_build.py at install time)
+projected_source/languages/lean_grammar/_binding*.so
