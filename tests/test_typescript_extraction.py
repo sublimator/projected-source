@@ -144,6 +144,55 @@ class TestTypeScriptExtractorVariables:
             ext.extract_variable(f, "NONEXISTENT")
 
 
+class TestTypeScriptExtractorVarDeclarations:
+    VAR_SRC = """\
+var legacyCount = 5;
+var legacyName: string = "hello";
+export var exportedLegacy = 99;
+const modernConst = 1;
+let modernLet = 2;
+"""
+
+    def test_extract_var_declaration(self, tmp_path):
+        f = tmp_path / "vars.ts"
+        f.write_text(self.VAR_SRC)
+        ext = TypeScriptExtractor()
+        text, start, end = ext.extract_variable(f, "legacyCount")
+        assert "var legacyCount" in text
+        assert "5" in text
+
+    def test_extract_typed_var_declaration(self, tmp_path):
+        f = tmp_path / "vars.ts"
+        f.write_text(self.VAR_SRC)
+        ext = TypeScriptExtractor()
+        text, start, end = ext.extract_variable(f, "legacyName")
+        assert "var legacyName" in text
+        assert "hello" in text
+
+    def test_extract_exported_var_declaration(self, tmp_path):
+        f = tmp_path / "vars.ts"
+        f.write_text(self.VAR_SRC)
+        ext = TypeScriptExtractor()
+        text, start, end = ext.extract_variable(f, "exportedLegacy")
+        assert "export var exportedLegacy" in text
+        assert "99" in text
+
+    def test_list_symbols_includes_var(self, tmp_path):
+        f = tmp_path / "vars.ts"
+        f.write_text(self.VAR_SRC)
+        ext = TypeScriptExtractor()
+        symbols = ext.list_symbols(f)
+        names = [s["name"] for s in symbols]
+        assert "legacyCount" in names
+        assert "legacyName" in names
+        assert "exportedLegacy" in names
+        assert "modernConst" in names
+        assert "modernLet" in names
+        by_name = {s["name"]: s for s in symbols}
+        assert by_name["legacyCount"]["param"] == "var"
+        assert by_name["exportedLegacy"]["param"] == "var"
+
+
 class TestTypeScriptExtractorMarkers:
     def test_extract_marker(self, tmp_path):
         f = tmp_path / "test.ts"

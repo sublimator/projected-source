@@ -213,19 +213,21 @@ class TypeScriptExtractor(BaseExtractor):
         return None
 
     def _find_variable(self, root, name: str):
-        """Find a lexical_declaration (const/let/var) containing a variable declarator with the given name."""
+        """Find a const/let (``lexical_declaration``) or ``var`` (``variable_declaration``) containing a
+        variable_declarator with the given name.
+        """
         for node in root.children:
             target = node
             # Unwrap export_statement
             if node.type == "export_statement":
                 for child in node.children:
-                    if child.type == "lexical_declaration":
+                    if child.type in ("lexical_declaration", "variable_declaration"):
                         target = child
                         break
                 else:
                     continue
 
-            if target.type == "lexical_declaration":
+            if target.type in ("lexical_declaration", "variable_declaration"):
                 for child in target.children:
                     if child.type == "variable_declarator":
                         name_node = child.child_by_field_name("name")
@@ -358,6 +360,7 @@ class TypeScriptExtractor(BaseExtractor):
                         "type_alias_declaration",
                         "enum_declaration",
                         "lexical_declaration",
+                        "variable_declaration",
                     ):
                         target = grandchild
                         break
@@ -444,7 +447,7 @@ class TypeScriptExtractor(BaseExtractor):
                         }
                     )
 
-            elif target.type == "lexical_declaration":
+            elif target.type in ("lexical_declaration", "variable_declaration"):
                 for decl in target.children:
                     if decl.type == "variable_declarator":
                         name_node = decl.child_by_field_name("name")
