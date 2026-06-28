@@ -1,14 +1,14 @@
 <!--
 rendered_from: system-overview.md.j2
-rendered_at: 2026-06-23T05:30:14Z
+rendered_at: 2026-06-28T12:13:21Z
 branch: main
-commit: 1a63693
-commit_message: test: replace tautology + non-detecting regression assertions
+commit: 30cfd7a
+commit_message: fix: extractor/render/permalink papercuts (overloads, frontmatter, untracked files)
 -->
 
 ---
 
-<sub>Last updated: 2026-06-23 | branch: main | commit: 1a63693 (test: replace tautology + non-detecting regression assertions)</sub>
+<sub>Last updated: 2026-06-28 | branch: main | commit: 30cfd7a (fix: extractor/render/permalink papercuts (overloads, frontmatter, untracked files))</sub>
 
 ---
 
@@ -33,7 +33,7 @@ Before diving into how extraction works, let's look at the types that flow throu
 
 Every time code is extracted from a source file — whether a function, struct, or marker region — the result is packaged as an `ExtractionResult`. This dataclass carries the extracted text along with precise location metadata:
 
-📍 [`projected_source/languages/extraction_result.py:9-36`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/languages/extraction_result.py#L9-L36)
+📍 [`projected_source/languages/extraction_result.py:9-36`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/languages/extraction_result.py#L9-L36)
 ```python
    9 @dataclass
   10 class ExtractionResult:
@@ -71,7 +71,7 @@ The `to_tuple()` method exists for backwards compatibility — most of the extra
 
 When validating that documentation covers code changes, individual changed regions are represented as `ChangeRegion` — a simple dataclass tying a file path to a line range:
 
-📍 [`projected_source/core/changes_set.py:15-24`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/changes_set.py#L15-L24)
+📍 [`projected_source/core/changes_set.py:15-24`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/changes_set.py#L15-L24)
 ```python
   15 @dataclass
   16 class ChangeRegion:
@@ -91,7 +91,7 @@ When validating that documentation covers code changes, individual changed regio
 
 The system supports multiple languages through a simple registry pattern. Each file extension maps to an extractor class:
 
-📍 [`projected_source/languages/__init__.py:19-41`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/languages/__init__.py#L19-L41)
+📍 [`projected_source/languages/__init__.py:19-41`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/languages/__init__.py#L19-L41)
 ```python
   19 EXTRACTORS = {
   20     ".cpp": CppExtractor,
@@ -120,7 +120,7 @@ The system supports multiple languages through a simple registry pattern. Each f
 
 When a `code()` call needs to extract from a file, it calls `get_extractor()` which looks up the right class by file extension and instantiates it:
 
-📍 [`projected_source/languages/__init__.py:44-66`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/languages/__init__.py#L44-L66)
+📍 [`projected_source/languages/__init__.py:44-66`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/languages/__init__.py#L44-L66)
 ```python
   44 def get_extractor(file_path: Path):
   45     """
@@ -151,7 +151,7 @@ When a `code()` call needs to extract from a file, it calls `get_extractor()` wh
 
 All language extractors inherit from `BaseExtractor`, which provides the tree-sitter parser setup, line extraction, and the marker system. The marker system lets you tag regions of source code with `//@@start name` and `//@@end name` comments, then extract just that region:
 
-📍 [`projected_source/core/extractor.py:17-134`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/extractor.py#L17-L134)
+📍 [`projected_source/core/extractor.py:17-134`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/extractor.py#L17-L134)
 ```python
   17 class BaseExtractor:
   18     """Base class for language-specific extractors."""
@@ -287,7 +287,7 @@ The `TemplateRenderer` is the heart of the system. It creates a Jinja2 environme
 
 When a renderer is created, it sets up the Jinja2 environment with the template directory as the loader root, and registers the extraction functions as globals:
 
-📍 [`projected_source/core/renderer.py:75-115`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/renderer.py#L75-L115)
+📍 [`projected_source/core/renderer.py:75-115`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/renderer.py#L75-L115)
 ```python
   75     def __init__(
   76         self,
@@ -336,7 +336,7 @@ When a renderer is created, it sets up the Jinja2 environment with the template 
 
 This is the workhorse. Every `{{ code('file.cpp', function='foo') }}` call in a template invokes `_code_function`. It resolves the file path, picks the right extractor, extracts the requested symbol, optionally generates a GitHub permalink, adds line numbers, and returns formatted markdown:
 
-📍 [`projected_source/core/renderer.py:120-404`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/renderer.py#L120-L404)
+📍 [`projected_source/core/renderer.py:120-404`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/renderer.py#L120-L404)
 ```python
  120     def _code_function(
  121         self,
@@ -633,7 +633,7 @@ When a `ChangesSet` is provided (validation mode), each extraction automatically
 
 Templates can compose by including other files. Plain markdown files are included verbatim; `.j2` files are rendered as templates with full access to `code()` and other functions:
 
-📍 [`projected_source/core/renderer.py:516-539`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/renderer.py#L516-L539)
+📍 [`projected_source/core/renderer.py:516-539`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/renderer.py#L516-L539)
 ```python
  516     def _include_function(self, path: str) -> str:
  517         """
@@ -665,7 +665,7 @@ Templates can compose by including other files. Plain markdown files are include
 
 Projects can extend the template environment by placing a `.projected-source.py` file in the project. The renderer discovers it by walking up from the template directory to the git root:
 
-📍 [`projected_source/core/renderer.py:574-602`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/renderer.py#L574-L602)
+📍 [`projected_source/core/renderer.py:574-602`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/renderer.py#L574-L602)
 ```python
  574     def _find_custom_tags_file(self, start_path: Path) -> Optional[Path]:
  575         """
@@ -702,7 +702,7 @@ Projects can extend the template environment by placing a `.projected-source.py`
 
 The public API is straightforward — `render_template()` for named templates and `render_template_file()` for file paths:
 
-📍 [`projected_source/core/renderer.py:652-675`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/renderer.py#L652-L675)
+📍 [`projected_source/core/renderer.py:652-675`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/renderer.py#L652-L675)
 ```python
  652     def render_template(self, template_name: str, **context) -> str:
  653         """
@@ -740,7 +740,7 @@ Every extracted code block can include a clickable GitHub permalink. The `GitHub
 
 Repository info is loaded on first access. The class auto-detects the GitHub URL from the git remote, handling both SSH and HTTPS formats:
 
-📍 [`projected_source/core/github.py:186-228`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/github.py#L186-L228)
+📍 [`projected_source/core/github.py:186-228`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/github.py#L186-L228)
 ```python
  186     def _init_repo_info(self):
  187         """Lazy initialization of repository information."""
@@ -793,7 +793,7 @@ When you're working on a file with uncommitted changes, the line numbers in your
 
 The full-diff parser builds a line-by-line mapping from new to old positions:
 
-📍 [`projected_source/core/github.py:37-83`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/github.py#L37-L83)
+📍 [`projected_source/core/github.py:37-83`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/github.py#L37-L83)
 ```python
   37 def build_line_mapping(diff_output: str) -> Dict[int, Optional[int]]:
   38     """
@@ -846,7 +846,7 @@ The full-diff parser builds a line-by-line mapping from new to old positions:
 
 This mapping is used by `map_to_committed_line()`, which falls back gracefully — if a line was newly added, it finds the nearest existing line before it:
 
-📍 [`projected_source/core/github.py:138-173`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/github.py#L138-L173)
+📍 [`projected_source/core/github.py:138-173`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/github.py#L138-L173)
 ```python
  138 def map_line_to_committed_full(new_line: int, diff_output: str) -> int:
  139     """
@@ -890,133 +890,139 @@ This mapping is used by `map_to_committed_line()`, which falls back gracefully �
 
 The `get_permalink()` method ties it all together — it maps lines, builds the URL with line anchors, and returns a markdown link:
 
-📍 [`projected_source/core/github.py:324-409`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/github.py#L324-L409)
+📍 [`projected_source/core/github.py:364-455`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/github.py#L364-L455)
 ```python
- 324     def get_permalink(
- 325         self, file_path: Path, start_line: int = None, end_line: int = None, display_committed_lines: bool = True
- 326     ) -> str:
- 327         """
- 328         Generate a GitHub permalink for a file or line range.
- 329 
- 330         Args:
- 331             file_path: Path to the file
- 332             start_line: Optional start line number (1-based)
- 333             end_line: Optional end line number (1-based)
- 334             display_committed_lines: If True, display shows committed line numbers (matches link).
- 335                                      If False, display shows working copy line numbers.
- 336 
- 337         Returns:
- 338             Formatted markdown link or plain text reference
- 339         """
- 340         # Make path relative to repo root
- 341         try:
- 342             if file_path.is_absolute():
- 343                 rel_path = file_path.relative_to(self.repo_path)
- 344             else:
- 345                 rel_path = file_path
- 346         except ValueError:
- 347             rel_path = file_path
- 348 
- 349         if self.github_url and self.commit_hash:
- 350             # Map line numbers if file is dirty (has uncommitted changes like markers)
- 351             committed_start = None
- 352             committed_end = None
- 353             # Track dirty state authoritatively, not via line-number drift —
- 354             # a file can be edited without shifting the lines we render.
- 355             is_dirty = self.is_file_dirty(file_path)
- 356 
- 357             if start_line is not None:
- 358                 committed_start = self.map_to_committed_line(file_path, start_line)
- 359                 if end_line is not None:
- 360                     committed_end = self.map_to_committed_line(file_path, end_line)
- 361 
- 362             # Build GitHub URL with committed line numbers
- 363             url = f"{self.github_url}/blob/{self.commit_hash}/{rel_path}"
- 364 
- 365             # Add line anchors if specified (using committed line numbers for URL)
- 366             if committed_start is not None:
- 367                 # Choose which line numbers to display
- 368                 if display_committed_lines or not is_dirty:
- 369                     display_start = committed_start
- 370                     display_end = committed_end
- 371                 else:
- 372                     # start_line must be set if committed_start was computed
- 373                     assert start_line is not None
- 374                     display_start = start_line
- 375                     display_end = end_line
+ 364     def get_permalink(
+ 365         self, file_path: Path, start_line: int = None, end_line: int = None, display_committed_lines: bool = True
+ 366     ) -> str:
+ 367         """
+ 368         Generate a GitHub permalink for a file or line range.
+ 369 
+ 370         Args:
+ 371             file_path: Path to the file
+ 372             start_line: Optional start line number (1-based)
+ 373             end_line: Optional end line number (1-based)
+ 374             display_committed_lines: If True, display shows committed line numbers (matches link).
+ 375                                      If False, display shows working copy line numbers.
  376 
- 377                 # URL anchor must use committed line numbers
- 378                 if committed_end and committed_end != committed_start:
- 379                     url += f"#L{committed_start}-L{committed_end}"
- 380                     if is_dirty:
- 381                         logger.debug(
- 382                             f"Dirty file: mapped lines {start_line}-{end_line} → {committed_start}-{committed_end}"
- 383                         )
- 384                 else:
- 385                     url += f"#L{committed_start}"
- 386 
- 387                 # Display label uses whichever line space we're showing — when
- 388                 # display_committed_lines=False, working-copy lines may span a
- 389                 # range even if their committed counterparts collapse to one.
- 390                 if display_end is not None and display_end != display_start:
- 391                     display = f"{rel_path}:{display_start}-{display_end}"
- 392                 else:
- 393                     display = f"{rel_path}:{display_start}"
- 394             else:
- 395                 display = str(rel_path)
+ 377         Returns:
+ 378             Formatted markdown link or plain text reference
+ 379         """
+ 380         # Make path relative to repo root
+ 381         try:
+ 382             if file_path.is_absolute():
+ 383                 rel_path = file_path.relative_to(self.repo_path)
+ 384             else:
+ 385                 rel_path = file_path
+ 386         except ValueError:
+ 387             rel_path = file_path
+ 388 
+ 389         if self.github_url and self.commit_hash:
+ 390             # Map line numbers if file is dirty (has uncommitted changes like markers)
+ 391             committed_start = None
+ 392             committed_end = None
+ 393             # Track dirty state authoritatively, not via line-number drift —
+ 394             # a file can be edited without shifting the lines we render.
+ 395             is_dirty = self.is_file_dirty(file_path)
  396 
- 397             # Surface dirty state so readers know the link points at HEAD content,
- 398             # which may differ from what's rendered above.
- 399             suffix = " *(uncommitted)*" if is_dirty else ""
- 400             return f"📍 [`{display}`]({url}){suffix}"
- 401         else:
- 402             # No GitHub info, return plain text
- 403             if start_line is not None:
- 404                 if end_line and end_line != start_line:
- 405                     return f"📍 `{rel_path}:{start_line}-{end_line}`"
- 406                 else:
- 407                     return f"📍 `{rel_path}:{start_line}`"
- 408             else:
- 409                 return f"📍 `{rel_path}`"
+ 397             # An untracked / not-yet-committed file has no blob at commit_hash,
+ 398             # so a blob/<sha>/<path> link would 404. Only dirty files can be in
+ 399             # this state (a clean tracked file always exists at HEAD), so we gate
+ 400             # the extra git call on is_dirty. Suppress the link instead of
+ 401             # emitting a dead one.
+ 402             if is_dirty and not self.exists_at_commit(file_path, self.commit_hash):
+ 403                 logger.warning(
+ 404                     f"{rel_path} is not present at {self.commit_hash[:8]} "
+ 405                     f"(untracked or uncommitted new file); suppressing permalink"
+ 406                 )
+ 407                 return self._plain_reference(rel_path, start_line, end_line, suffix=" *(untracked — no permalink)*")
+ 408 
+ 409             if start_line is not None:
+ 410                 committed_start = self.map_to_committed_line(file_path, start_line)
+ 411                 if end_line is not None:
+ 412                     committed_end = self.map_to_committed_line(file_path, end_line)
+ 413 
+ 414             # Build GitHub URL with committed line numbers
+ 415             url = f"{self.github_url}/blob/{self.commit_hash}/{rel_path}"
+ 416 
+ 417             # Add line anchors if specified (using committed line numbers for URL)
+ 418             if committed_start is not None:
+ 419                 # Choose which line numbers to display
+ 420                 if display_committed_lines or not is_dirty:
+ 421                     display_start = committed_start
+ 422                     display_end = committed_end
+ 423                 else:
+ 424                     # start_line must be set if committed_start was computed
+ 425                     assert start_line is not None
+ 426                     display_start = start_line
+ 427                     display_end = end_line
+ 428 
+ 429                 # URL anchor must use committed line numbers
+ 430                 if committed_end and committed_end != committed_start:
+ 431                     url += f"#L{committed_start}-L{committed_end}"
+ 432                     if is_dirty:
+ 433                         logger.debug(
+ 434                             f"Dirty file: mapped lines {start_line}-{end_line} → {committed_start}-{committed_end}"
+ 435                         )
+ 436                 else:
+ 437                     url += f"#L{committed_start}"
+ 438 
+ 439                 # Display label uses whichever line space we're showing — when
+ 440                 # display_committed_lines=False, working-copy lines may span a
+ 441                 # range even if their committed counterparts collapse to one.
+ 442                 if display_end is not None and display_end != display_start:
+ 443                     display = f"{rel_path}:{display_start}-{display_end}"
+ 444                 else:
+ 445                     display = f"{rel_path}:{display_start}"
+ 446             else:
+ 447                 display = str(rel_path)
+ 448 
+ 449             # Surface dirty state so readers know the link points at HEAD content,
+ 450             # which may differ from what's rendered above.
+ 451             suffix = " *(uncommitted)*" if is_dirty else ""
+ 452             return f"📍 [`{display}`]({url}){suffix}"
+ 453         else:
+ 454             # No GitHub info, return plain text
+ 455             return self._plain_reference(rel_path, start_line, end_line)
 ```
 
 ### Blame Support
 
 For deeper code archaeology, `blame=True` annotates each line with its author, date, and commit hash:
 
-📍 [`projected_source/core/github.py:472-502`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/github.py#L472-L502)
+📍 [`projected_source/core/github.py:518-548`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/github.py#L518-L548)
 ```python
- 472     def format_with_blame(self, code_text: str, start_line: int, file_path: Path) -> str:
- 473         """
- 474         Format code with git blame information.
- 475 
- 476         Args:
- 477             code_text: The code to format
- 478             start_line: Starting line number
- 479             file_path: Path to the file
- 480 
- 481         Returns:
- 482             Formatted code with blame info
- 483         """
- 484         lines = code_text.splitlines()
- 485         end_line = start_line + len(lines) - 1
- 486 
- 487         blame_info = self.get_blame(file_path, start_line, end_line)
- 488 
- 489         formatted_lines = []
- 490         for i, line in enumerate(lines):
- 491             line_num = start_line + i
- 492 
- 493             if line_num in blame_info:
- 494                 blame = blame_info[line_num]
- 495                 # Format: line_num | commit | author | date | code
- 496                 formatted_line = f"{line_num:4} │ {blame['commit']} │ {blame['author']:<20} │ {blame['date']} │ {line}"
- 497             else:
- 498                 formatted_line = f"{line_num:4} │ {line}"
- 499 
- 500             formatted_lines.append(formatted_line)
- 501 
- 502         return "\n".join(formatted_lines)
+ 518     def format_with_blame(self, code_text: str, start_line: int, file_path: Path) -> str:
+ 519         """
+ 520         Format code with git blame information.
+ 521 
+ 522         Args:
+ 523             code_text: The code to format
+ 524             start_line: Starting line number
+ 525             file_path: Path to the file
+ 526 
+ 527         Returns:
+ 528             Formatted code with blame info
+ 529         """
+ 530         lines = code_text.splitlines()
+ 531         end_line = start_line + len(lines) - 1
+ 532 
+ 533         blame_info = self.get_blame(file_path, start_line, end_line)
+ 534 
+ 535         formatted_lines = []
+ 536         for i, line in enumerate(lines):
+ 537             line_num = start_line + i
+ 538 
+ 539             if line_num in blame_info:
+ 540                 blame = blame_info[line_num]
+ 541                 # Format: line_num | commit | author | date | code
+ 542                 formatted_line = f"{line_num:4} │ {blame['commit']} │ {blame['author']:<20} │ {blame['date']} │ {line}"
+ 543             else:
+ 544                 formatted_line = f"{line_num:4} │ {line}"
+ 545 
+ 546             formatted_lines.append(formatted_line)
+ 547 
+ 548         return "\n".join(formatted_lines)
 ```
 
 ---
@@ -1029,7 +1035,7 @@ One of the most powerful features: projected-source can verify that your documen
 
 The `ChangesSet` class tracks changed regions as a set of non-overlapping intervals per file. It supports adding regions (which auto-merge overlapping ranges), subtracting regions (which can split intervals), and querying what's left uncovered:
 
-📍 [`projected_source/core/changes_set.py:27-252`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/changes_set.py#L27-L252)
+📍 [`projected_source/core/changes_set.py:27-252`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/changes_set.py#L27-L252)
 ```python
   27 class ChangesSet:
   28     """
@@ -1263,7 +1269,7 @@ The `ChangesSet` class tracks changed regions as a set of non-overlapping interv
 
 `from_diff()` parses unified diff output to populate the set. It supports both simple base refs (`origin/main`) and explicit ranges (`HEAD~5..HEAD~2`):
 
-📍 [`projected_source/core/changes_set.py:40-73`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/changes_set.py#L40-L73)
+📍 [`projected_source/core/changes_set.py:40-73`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/changes_set.py#L40-L73)
 ```python
   40     @classmethod
   41     def from_diff(cls, base: Optional[str] = None, repo_path: Optional[Path] = None) -> "ChangesSet":
@@ -1303,7 +1309,7 @@ The `ChangesSet` class tracks changed regions as a set of non-overlapping interv
 
 The diff parser walks through hunk headers and added lines to build up the initial set of changed regions:
 
-📍 [`projected_source/core/changes_set.py:105-148`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/changes_set.py#L105-L148)
+📍 [`projected_source/core/changes_set.py:105-148`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/changes_set.py#L105-L148)
 ```python
  105     def _parse_diff(self, diff_output: str, repo_path: Path) -> None:
  106         """Parse unified diff output and populate regions."""
@@ -1355,7 +1361,7 @@ The diff parser walks through hunk headers and added lines to build up the initi
 
 As templates render, each `code()` call subtracts its extracted region. The `subtract()` method handles partial overlaps — if documentation covers the middle of a changed region, it splits into two uncovered remainders:
 
-📍 [`projected_source/core/changes_set.py:183-223`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/changes_set.py#L183-L223)
+📍 [`projected_source/core/changes_set.py:183-223`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/changes_set.py#L183-L223)
 ```python
  183     def subtract(self, file_path: Path, start: int, end: int) -> None:
  184         """
@@ -1402,7 +1408,7 @@ As templates render, each `code()` call subtracts its extracted region. The `sub
 
 After rendering, `uncovered()` returns whatever's left:
 
-📍 [`projected_source/core/changes_set.py:225-231`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/core/changes_set.py#L225-L231)
+📍 [`projected_source/core/changes_set.py:225-231`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/changes_set.py#L225-L231)
 ```python
  225     def uncovered(self) -> List[ChangeRegion]:
  226         """Return list of regions not yet claimed by documentation."""
@@ -1419,7 +1425,7 @@ After rendering, `uncovered()` returns whatever's left:
 
 The CLI is built with Click. The main entry point registers all commands:
 
-📍 [`projected_source/cli/__init__.py:19-29`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/cli/__init__.py#L19-L29)
+📍 [`projected_source/cli/__init__.py:19-29`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/cli/__init__.py#L19-L29)
 ```python
   19 @click.group()
   20 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
@@ -1440,110 +1446,110 @@ The primary command renders `.md.j2` templates. It handles single files, directo
 
 Single-file rendering resolves the template path, creates a `TemplateRenderer`, and writes the output:
 
-📍 [`projected_source/cli/render.py:364-394`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/cli/render.py#L364-L394)
+📍 [`projected_source/cli/render.py:392-422`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/cli/render.py#L392-L422)
 ```python
- 364 def _render_file(
- 365     input_file, output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None, header=False
- 366 ):
- 367     """Render a single template file."""
- 368     # Determine template directory
- 369     template_dir = input_file.parent
- 370     template_name = input_file.name
- 371 
- 372     # Create renderer
- 373     renderer = TemplateRenderer(
- 374         template_dir=template_dir, repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
- 375     )
- 376 
- 377     try:
- 378         rendered = renderer.render_template(template_name)
- 379 
- 380         if header:
- 381             rendered = _build_header(template_name, repo_path) + rendered
- 382 
- 383         if output_to_stdout:
- 384             # Output to stdout
- 385             click.echo(rendered)
- 386         else:
- 387             # Output to file
- 388             output_file.parent.mkdir(parents=True, exist_ok=True)
- 389             output_file.write_text(rendered)
- 390             console.print(f"[green]✓[/green] {input_file} → {output_file}")
- 391 
- 392     except Exception as e:
- 393         console.print(f"[red]✗ Failed to render {input_file}:[/red] {e}")
- 394         sys.exit(1)
+ 392 def _render_file(
+ 393     input_file, output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None, header=False
+ 394 ):
+ 395     """Render a single template file."""
+ 396     # Determine template directory
+ 397     template_dir = input_file.parent
+ 398     template_name = input_file.name
+ 399 
+ 400     # Create renderer
+ 401     renderer = TemplateRenderer(
+ 402         template_dir=template_dir, repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
+ 403     )
+ 404 
+ 405     try:
+ 406         rendered = renderer.render_template(template_name)
+ 407 
+ 408         if header:
+ 409             rendered = _apply_header(_build_header(template_name, repo_path), rendered)
+ 410 
+ 411         if output_to_stdout:
+ 412             # Output to stdout
+ 413             click.echo(rendered)
+ 414         else:
+ 415             # Output to file
+ 416             output_file.parent.mkdir(parents=True, exist_ok=True)
+ 417             output_file.write_text(rendered)
+ 418             console.print(f"[green]✓[/green] {input_file} → {output_file}")
+ 419 
+ 420     except Exception as e:
+ 421         console.print(f"[red]✗ Failed to render {input_file}:[/red] {e}")
+ 422         sys.exit(1)
 ```
 
 Directory rendering walks the tree and renders all `.j2` files:
 
-📍 [`projected_source/cli/render.py:397-454`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/cli/render.py#L397-L454)
+📍 [`projected_source/cli/render.py:425-482`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/cli/render.py#L425-L482)
 ```python
- 397 def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False, changes_set=None, header=False):
- 398     """Render all templates in a directory."""
- 399     templates = list(input_dir.glob("**/*.j2"))
- 400 
- 401     if not templates:
- 402         console.print(f"[yellow]No .j2 templates found in {input_dir}[/yellow]")
- 403         return
- 404 
- 405     console.print(f"[bold]Processing {len(templates)} templates from {input_dir}[/bold]")
- 406 
- 407     # Create renderer
- 408     renderer = TemplateRenderer(
- 409         template_dir=input_dir, repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
- 410     )
- 411 
- 412     # Track results
- 413     success_count = 0
- 414     failed = []
- 415 
- 416     # Process each template
- 417     for template_path in templates:
- 418         rel_path = template_path.relative_to(input_dir)
- 419 
- 420         # Determine output path (strip .j2 extension)
- 421         if rel_path.suffix == ".j2":
- 422             output_rel_path = rel_path.with_suffix("")
- 423         else:
- 424             output_rel_path = rel_path
- 425 
- 426         output_path_full = output_dir / output_rel_path
- 427 
- 428         try:
- 429             # Render template
- 430             rendered = renderer.render_template(str(rel_path))
- 431 
- 432             if header:
- 433                 rendered = _build_header(str(rel_path), repo_path) + rendered
+ 425 def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False, changes_set=None, header=False):
+ 426     """Render all templates in a directory."""
+ 427     templates = list(input_dir.glob("**/*.j2"))
+ 428 
+ 429     if not templates:
+ 430         console.print(f"[yellow]No .j2 templates found in {input_dir}[/yellow]")
+ 431         return
+ 432 
+ 433     console.print(f"[bold]Processing {len(templates)} templates from {input_dir}[/bold]")
  434 
- 435             # Write output
- 436             output_path_full.parent.mkdir(parents=True, exist_ok=True)
- 437             output_path_full.write_text(rendered)
- 438 
- 439             console.print(f"  [green]✓[/green] {rel_path} → {output_rel_path}")
- 440             success_count += 1
- 441 
- 442         except Exception as e:
- 443             console.print(f"  [red]✗[/red] {rel_path}: {e}")
- 444             failed.append((rel_path, str(e)))
- 445 
- 446     # Summary
- 447     console.print("\n[bold]Summary:[/bold]")
- 448     console.print(f"  [green]{success_count} templates rendered successfully[/green]")
- 449 
- 450     if failed:
- 451         console.print(f"  [red]{len(failed)} templates failed:[/red]")
- 452         for template, error in failed:
- 453             console.print(f"    • {template}: {error}")
- 454         sys.exit(1)
+ 435     # Create renderer
+ 436     renderer = TemplateRenderer(
+ 437         template_dir=input_dir, repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
+ 438     )
+ 439 
+ 440     # Track results
+ 441     success_count = 0
+ 442     failed = []
+ 443 
+ 444     # Process each template
+ 445     for template_path in templates:
+ 446         rel_path = template_path.relative_to(input_dir)
+ 447 
+ 448         # Determine output path (strip .j2 extension)
+ 449         if rel_path.suffix == ".j2":
+ 450             output_rel_path = rel_path.with_suffix("")
+ 451         else:
+ 452             output_rel_path = rel_path
+ 453 
+ 454         output_path_full = output_dir / output_rel_path
+ 455 
+ 456         try:
+ 457             # Render template
+ 458             rendered = renderer.render_template(str(rel_path))
+ 459 
+ 460             if header:
+ 461                 rendered = _apply_header(_build_header(str(rel_path), repo_path), rendered)
+ 462 
+ 463             # Write output
+ 464             output_path_full.parent.mkdir(parents=True, exist_ok=True)
+ 465             output_path_full.write_text(rendered)
+ 466 
+ 467             console.print(f"  [green]✓[/green] {rel_path} → {output_rel_path}")
+ 468             success_count += 1
+ 469 
+ 470         except Exception as e:
+ 471             console.print(f"  [red]✗[/red] {rel_path}: {e}")
+ 472             failed.append((rel_path, str(e)))
+ 473 
+ 474     # Summary
+ 475     console.print("\n[bold]Summary:[/bold]")
+ 476     console.print(f"  [green]{success_count} templates rendered successfully[/green]")
+ 477 
+ 478     if failed:
+ 479         console.print(f"  [red]{len(failed)} templates failed:[/red]")
+ 480         for template, error in failed:
+ 481             console.print(f"    • {template}: {error}")
+ 482         sys.exit(1)
 ```
 
 ### Symbol Discovery
 
 The `list-functions` command is essential for authoring templates — it shows every extractable symbol in a file, including the parameter you'd use in a `code()` call:
 
-📍 [`projected_source/cli/list_symbols.py:15-107`](https://github.com/sublimator/projected-source/blob/1a63693f86b67f7cbfe9bfb603a20e8bcd892b38/projected_source/cli/list_symbols.py#L15-L107)
+📍 [`projected_source/cli/list_symbols.py:15-107`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/cli/list_symbols.py#L15-L107)
 ```python
   15 @click.command("list-functions")
   16 @click.argument("file", required=False, type=click.Path(exists=True, dir_okay=False))
