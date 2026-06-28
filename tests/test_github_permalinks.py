@@ -1,9 +1,11 @@
 """
 Regression tests for GitHubIntegration permalink/dirty-detection bugs.
 
-Covers two specific issues:
-  1. Untracked files were not detected as dirty (because `git diff` ignores them),
-     so permalinks pointed at HEAD (404) without an "uncommitted" marker.
+Covers these specific issues:
+  1. Untracked files were not detected as dirty (because `git diff` ignores them).
+     They are now both detected as dirty AND, since they have no blob at HEAD,
+     their permalink is suppressed (a blob/<sha>/<path> link would 404) in favor
+     of a plain "*(untracked — no permalink)*" reference.
   2. When display_committed_lines=False, the display label collapsed to a single
      line whenever the *committed* range collapsed — even though the *working
      copy* range spanned multiple lines.
@@ -60,17 +62,45 @@ class TestUntrackedFileDirtyDetection:
         github = GitHubIntegration(repo_with_remote)
         assert github.is_file_dirty(ghost) is False
 
-    def test_untracked_file_permalink_has_uncommitted_marker(self, repo_with_remote):
-        """get_permalink must surface the *(uncommitted)* suffix for untracked files."""
+    def test_untracked_file_permalink_is_suppressed(self, repo_with_remote):
+        """An untracked file has no blob at HEAD, so a blob/<sha>/<path> link would
+        404. get_permalink must suppress the link and emit a plain reference."""
         untracked = repo_with_remote / "new_file.py"
         untracked.write_text("a\nb\nc\n")
 
         github = GitHubIntegration(repo_with_remote)
         permalink = github.get_permalink(untracked, start_line=1, end_line=2)
 
-        assert "*(uncommitted)*" in permalink, (
-            f"Expected uncommitted marker in untracked-file permalink, got: {permalink}"
-        )
+        # No dead link: no markdown link target, no blob URL.
+        assert "](" not in permalink, f"Expected no link for untracked file, got: {permalink}"
+        assert "blob/" not in permalink
+        # Clearly flagged + still references the location.
+        assert "*(untracked — no permalink)*" in permalink
+        assert "new_file.py:1-2" in permalink
+
+    def test_exists_at_commit_discriminates_tracked_vs_untracked(self, repo_with_remote):
+        """exists_at_commit underpins suppression: tracked file present at HEAD,
+        untracked file absent."""
+        github = GitHubIntegration(repo_with_remote)
+        head = github.commit_hash
+        assert github.exists_at_commit(repo_with_remote / "tracked.txt", head) is True
+
+        untracked = repo_with_remote / "new_file.py"
+        untracked.write_text("x\n")
+        assert github.exists_at_commit(untracked, head) is False
+
+    def test_tracked_modified_file_keeps_permalink(self, repo_with_remote):
+        """A tracked-but-modified file DOES exist at HEAD, so its link must be
+        preserved (with the *(uncommitted)* marker), not suppressed."""
+        tracked = repo_with_remote / "tracked.txt"
+        tracked.write_text("seed\nmore\n")  # modify the committed file
+
+        github = GitHubIntegration(repo_with_remote)
+        permalink = github.get_permalink(tracked, start_line=1, end_line=1)
+
+        assert "blob/" in permalink, f"tracked-modified file should keep its link, got: {permalink}"
+        assert "*(uncommitted)*" in permalink
+        assert "*(untracked" not in permalink
 
 
 class TestDisplayBranchCollapse:

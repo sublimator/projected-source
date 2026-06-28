@@ -306,6 +306,47 @@ class TestClassMethodDeclarations:
         assert "addProposal" in result.text
 
 
+class TestSignatureBeatsDefaultedOverload:
+    """Regression: signature= must select a declaration-only overload even when
+    a *different* overload of the same name has a body (e.g. ``= default``).
+
+    Before the fix, the prefer-definitions dedup ran first and discarded the
+    declaration, so signature= matching found nothing and returned None.
+    """
+
+    @pytest.fixture
+    def fixture_file(self):
+        return Path("tests/fixtures/ctor_overloads.h")
+
+    @pytest.fixture
+    def parser(self):
+        return SimpleCppParser()
+
+    def test_both_overloads_found(self, parser, fixture_file):
+        source = fixture_file.read_bytes()
+        nodes = parser._find_all_nodes_by_qualified_name(source, "Consensus::Consensus", ["function_definition"])
+        # The defaulted move-ctor (function_definition) + the declared ctor (declaration).
+        assert len(nodes) == 2
+        types = {n.type for n in nodes}
+        assert "function_definition" in types  # = default move ctor
+        assert "declaration" in types  # declared-but-not-defined ctor
+
+    def test_signature_selects_declaration_overload(self, parser, fixture_file):
+        source = fixture_file.read_bytes()
+        # The matching overload is declaration-only; the defaulted overload must
+        # not shadow it.
+        result = parser.extract_function_by_name(source, "Consensus::Consensus", signature="clock_type")
+        assert result is not None
+        assert "clock_type" in result.text
+        assert "= default" not in result.text
+
+    def test_signature_selects_defaulted_overload(self, parser, fixture_file):
+        source = fixture_file.read_bytes()
+        result = parser.extract_function_by_name(source, "Consensus::Consensus", signature="Consensus&&")
+        assert result is not None
+        assert "= default" in result.text
+
+
 class TestTemplateVsNonTemplateMarkers:
     """Test finding markers in non-template when template exists with same name."""
 

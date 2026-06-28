@@ -163,3 +163,52 @@ def test_list_functions_rejects_directory_argument(tmp_path):
 
     assert result.exit_code != 0
     assert "directory" in result.output.lower() or "is a directory" in result.output.lower()
+
+
+def _strip_ansi(text: str) -> str:
+    import re
+
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
+def test_header_kept_after_yaml_frontmatter(tmp_path):
+    """When the rendered body opens with YAML frontmatter, the metadata header
+    must be inserted AFTER the closing `---`, leaving frontmatter on line 1."""
+    runner = CliRunner()
+    template = "---\ntitle: My Doc\ntags: [a, b]\n---\n\n# Heading\n\nbody text\n"
+
+    result = runner.invoke(
+        cli,
+        ["render", "-", "-", "--repo-path", str(tmp_path)],
+        input=template,
+    )
+
+    assert result.exit_code == 0, result.output
+    out = _strip_ansi(result.output)
+    lines = out.splitlines()
+
+    # Frontmatter must still be first.
+    assert lines[0] == "---", f"frontmatter not on line 1; got: {lines[:3]!r}"
+    closing_idx = lines.index("---", 1)
+    # The metadata header comment must appear AFTER the frontmatter's close.
+    header_idx = next(i for i, ln in enumerate(lines) if ln.startswith("<!--"))
+    assert header_idx > closing_idx, "metadata header leaked above/into frontmatter"
+    # Frontmatter content stays intact and above the header.
+    assert lines.index("title: My Doc") < closing_idx
+
+
+def test_header_prepended_when_no_frontmatter(tmp_path):
+    """A body that merely contains a `---` rule (but doesn't start with one) is
+    not treated as frontmatter; the header is prepended at the very top."""
+    runner = CliRunner()
+    template = "# Title\n\nsome text\n\n---\n\nmore\n"
+
+    result = runner.invoke(
+        cli,
+        ["render", "-", "-", "--repo-path", str(tmp_path)],
+        input=template,
+    )
+
+    assert result.exit_code == 0, result.output
+    out = _strip_ansi(result.output)
+    assert out.lstrip().startswith("<!--"), f"header not prepended; got: {out[:40]!r}"

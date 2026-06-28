@@ -648,11 +648,13 @@ class SimpleCppParser:
         if not nodes:
             return None
 
-        # Deduplicate: prefer definitions over declarations (declaration in .h + definition in .cpp)
-        definitions = [n for n in nodes if n.type in ("function_definition", "template_declaration")]
-        if definitions:
-            nodes = definitions
-
+        # Filter by signature BEFORE the prefer-definitions dedup below. A
+        # declaration-only overload that uniquely matches the requested
+        # signature must not be discarded just because some *other* overload
+        # happens to have a body — e.g. a defaulted ``Foo(Foo&&) = default``
+        # (a function_definition) competing with a declared-but-not-defined
+        # ``Foo(clock_type const&, ...)`` (a declaration). Deduping first would
+        # drop the matching declaration and make signature= return nothing.
         if signature is not None:
             # Filter by signature
             matching = []
@@ -673,6 +675,11 @@ class SimpleCppParser:
                 logger.warning(f"Multiple overloads of '{function_name}' match signature '{signature}': {sigs}")
 
             nodes = matching
+
+        # Deduplicate: prefer definitions over declarations (declaration in .h + definition in .cpp)
+        definitions = [n for n in nodes if n.type in ("function_definition", "template_declaration")]
+        if definitions:
+            nodes = definitions
 
         # If target has template args (e.g. templateAdd<int>), prefer exact specialization
         # over generic template match

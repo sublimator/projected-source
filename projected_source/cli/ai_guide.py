@@ -200,6 +200,38 @@ Use `{{% set %}}` to define repo paths, then use `root=` on code() or code_conte
 {{{{ code('src/App.tsx', struct='App', root=frontend) }}}}
 ```
 
+## Disambiguating Overloaded C++ Functions (signature=)
+
+C++ functions are often overloaded (same name, different parameters) and many
+appear twice — once as an in-class **declaration** and once as an out-of-line
+**definition**. Use this workflow instead of falling back to `lines=`:
+
+1. Run `list-functions <file>` and find the symbol. Overloads share a name and
+   each is printed with a `signature='...'` hint, e.g.:
+
+   ```
+   'xrpl::Consensus::Consensus'  line 316  signature='(Consensus&&)'
+   'xrpl::Consensus::Consensus'  line 324  signature='(clock_type const& clock,
+   Adaptor& adaptor, beast::Journal j)'
+   ```
+
+2. Pick a **distinctive substring** of the parameters and pass it as `signature=`:
+
+   ```jinja
+   {{{{ code('Consensus.h', function='Consensus::Consensus', signature='clock_type') }}}}
+   ```
+
+Key facts about `signature=`:
+- It is a **case-sensitive substring match** against the parameter-list text
+  (including parameter names), not an exact signature. `signature='clock_type'`,
+  `signature='Adaptor&'`, or `signature='Journal j'` all select the same overload.
+- Pick the shortest substring that is unique to the overload you want — usually a
+  distinctive parameter **type** (`'TMProposeSet'`, `'std::string'`, `'int a, int b'`).
+- It correctly selects a **declaration-only** overload even when another overload
+  of the same name has a body (e.g. a defaulted `Foo(Foo&&) = default`).
+- Without `signature=`, the first/with-body match wins — which may not be the one
+  you want for overloaded or defaulted symbols, so prefer `signature=` for overloads.
+
 ## Marker Syntax in Source Files
 
 ```cpp
@@ -243,12 +275,21 @@ Example:
 ## Tips for AI Assistants
 
 1. **Prefer symbolic refs** - `function=`, `struct=`, `message=`, `enum=` over markers/lines
-2. **Use `signature=` for C++ overloads** - e.g., `function='onMessage', signature='TMProposeSet'`
+2. **Use `signature=` for C++ overloads** - substring match on the parameter list,
+   e.g. `function='onMessage', signature='TMProposeSet'`. See "Disambiguating
+   Overloaded C++ Functions" above for the full workflow — use it instead of `lines=`.
 3. **Dotted paths for methods** - `function='Class.method'` works in Java, TypeScript, Python, Rust.
    In Lean, dotted names are single identifiers (`def Point.origin`) — same syntax, different mechanism.
 4. **Use `list-functions`** to discover extractable symbols in any supported file
    (add `--include-tests` to surface items inside Rust `#[cfg(test)]` modules)
 5. **Use `ref=`** to extract code from any git branch, tag, or commit
 6. **Use `root=`** with absolute paths for multi-repo documentation
+7. **Untracked files** - extracting from a new, uncommitted file works, but its
+   GitHub permalink would 404, so it is auto-suppressed and rendered as a plain
+   `*(untracked — no permalink)*` reference. Commit the file to get a live link.
+8. **YAML frontmatter is preserved** - if a template renders to a body that starts
+   with a `---` frontmatter block, the metadata header is inserted *after* the
+   closing `---` so frontmatter stays on line 1. Use `--no-header` to omit the
+   metadata header entirely.
 """
     click.echo(guide)

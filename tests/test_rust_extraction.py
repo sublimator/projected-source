@@ -484,6 +484,10 @@ class TestGitHubDirtyPermalink:
         gh._commit_hash = "deadbeef"
         monkeypatch.setattr(gh, "is_file_dirty", lambda _p: True)
         monkeypatch.setattr(gh, "map_to_committed_line", lambda _p, line: line)
+        # Tracked-but-modified: the file DOES exist at HEAD, so the link is kept.
+        # (An untracked file, where exists_at_commit is False, is suppressed
+        # instead — see test_github_permalinks.py.)
+        monkeypatch.setattr(gh, "exists_at_commit", lambda _p, _c: True)
 
         result = gh.get_permalink(tmp_path / "src" / "x.rs", start_line=10, end_line=20)
         assert "*(uncommitted)*" in result

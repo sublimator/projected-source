@@ -268,6 +268,46 @@ class GitHubIntegration:
             logger.debug(f"Could not check dirty status for {file_path}: {e}")
             return False
 
+    def exists_at_commit(self, file_path: Path, commit: str) -> bool:
+        """
+        Return True if file_path is present in the given commit/tree.
+
+        Used to avoid emitting blob/<sha>/<path> permalinks that would 404
+        because the file is untracked or otherwise not committed at that ref.
+        """
+        try:
+            if file_path.is_absolute():
+                rel_path = file_path.relative_to(self.repo_path)
+            else:
+                rel_path = file_path
+        except ValueError:
+            rel_path = file_path
+
+        try:
+            # `git cat-file -e <commit>:<path>` exits 0 iff the blob exists.
+            result = subprocess.run(
+                ["git", "cat-file", "-e", f"{commit}:{rel_path}"],
+                cwd=self.repo_path,
+                capture_output=True,
+            )
+            return result.returncode == 0
+        except Exception as e:
+            logger.debug(f"Could not check existence of {file_path} at {commit}: {e}")
+            # Be conservative: assume it exists so we don't drop valid links.
+            return True
+
+    @staticmethod
+    def _plain_reference(rel_path, start_line=None, end_line=None, suffix: str = "") -> str:
+        """Build a link-free location reference (used when no permalink applies)."""
+        if start_line is not None:
+            if end_line and end_line != start_line:
+                loc = f"{rel_path}:{start_line}-{end_line}"
+            else:
+                loc = f"{rel_path}:{start_line}"
+        else:
+            loc = str(rel_path)
+        return f"📍 `{loc}`{suffix}"
+
     def get_diff_output(self, file_path: Path) -> str:
         """
         Get the full diff output for a file (cached).
@@ -354,6 +394,18 @@ class GitHubIntegration:
             # a file can be edited without shifting the lines we render.
             is_dirty = self.is_file_dirty(file_path)
 
+            # An untracked / not-yet-committed file has no blob at commit_hash,
+            # so a blob/<sha>/<path> link would 404. Only dirty files can be in
+            # this state (a clean tracked file always exists at HEAD), so we gate
+            # the extra git call on is_dirty. Suppress the link instead of
+            # emitting a dead one.
+            if is_dirty and not self.exists_at_commit(file_path, self.commit_hash):
+                logger.warning(
+                    f"{rel_path} is not present at {self.commit_hash[:8]} "
+                    f"(untracked or uncommitted new file); suppressing permalink"
+                )
+                return self._plain_reference(rel_path, start_line, end_line, suffix=" *(untracked — no permalink)*")
+
             if start_line is not None:
                 committed_start = self.map_to_committed_line(file_path, start_line)
                 if end_line is not None:
@@ -400,13 +452,7 @@ class GitHubIntegration:
             return f"📍 [`{display}`]({url}){suffix}"
         else:
             # No GitHub info, return plain text
-            if start_line is not None:
-                if end_line and end_line != start_line:
-                    return f"📍 `{rel_path}:{start_line}-{end_line}`"
-                else:
-                    return f"📍 `{rel_path}:{start_line}`"
-            else:
-                return f"📍 `{rel_path}`"
+            return self._plain_reference(rel_path, start_line, end_line)
 
     def get_blame(self, file_path: Path, start_line: int, end_line: int) -> Dict[int, Dict]:
         """

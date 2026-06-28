@@ -2,6 +2,7 @@
 Render command for processing Jinja2 templates.
 """
 
+import re
 import shutil
 import subprocess
 import sys
@@ -106,6 +107,33 @@ def _build_header(template_name: str, repo_path: Path) -> str:
         display_parts.append(f"commit: {commit_hash} ({commit_subject})")
 
     return "\n".join(lines) + f"\n\n---\n\n<sub>{' | '.join(display_parts)}</sub>\n\n---\n\n"
+
+
+# A leading YAML frontmatter block: a `---` line at the very start, arbitrary
+# content, then a closing `---` (or `...`) line. Non-greedy so it stops at the
+# first closing delimiter. The closing newline is optional so a body that is
+# *only* frontmatter still matches.
+_FRONTMATTER_RE = re.compile(r"\A---[ \t]*\r?\n.*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|\Z)", re.DOTALL)
+
+
+def _apply_header(header: str, rendered: str) -> str:
+    """Prepend the metadata header, keeping any leading YAML frontmatter first.
+
+    If the rendered body opens with a YAML frontmatter block, the header is
+    inserted *after* the closing delimiter so the frontmatter stays on line 1
+    and strict frontmatter parsers still see it. Otherwise the header is simply
+    prepended.
+    """
+    match = _FRONTMATTER_RE.match(rendered)
+    if not match:
+        return header + rendered
+
+    front = rendered[: match.end()]
+    rest = rendered[match.end() :]
+    if not front.endswith("\n"):
+        front += "\n"
+    # Blank line between the frontmatter block and the metadata header comment.
+    return f"{front}\n{header}{rest}"
 
 
 @click.command()
@@ -345,7 +373,7 @@ def _render_stdin(output_file, repo_path, output_to_stdout, remap_dirty_lines=Fa
         rendered = renderer.env.from_string(template_content).render()
 
         if header:
-            rendered = _build_header("<stdin>", repo_path) + rendered
+            rendered = _apply_header(_build_header("<stdin>", repo_path), rendered)
 
         if output_to_stdout:
             # Output to stdout
@@ -378,7 +406,7 @@ def _render_file(
         rendered = renderer.render_template(template_name)
 
         if header:
-            rendered = _build_header(template_name, repo_path) + rendered
+            rendered = _apply_header(_build_header(template_name, repo_path), rendered)
 
         if output_to_stdout:
             # Output to stdout
@@ -430,7 +458,7 @@ def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False,
             rendered = renderer.render_template(str(rel_path))
 
             if header:
-                rendered = _build_header(str(rel_path), repo_path) + rendered
+                rendered = _apply_header(_build_header(str(rel_path), repo_path), rendered)
 
             # Write output
             output_path_full.parent.mkdir(parents=True, exist_ok=True)
