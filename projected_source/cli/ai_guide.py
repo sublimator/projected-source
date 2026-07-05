@@ -81,6 +81,26 @@ projected-source render docs/ -V auto              # auto-detect base
 projected-source render docs/ -V auto --strict     # exit 1 if uncovered
 ```
 
+## Recipe: throwaway docs (PR descriptions, reviews)
+
+Templates don't have to render to committed files. A common use is a
+`pr-description.md.j2` (or `review.md.j2`, `report.md.j2`) kept in a gitignored
+`.ai-docs/` folder: render it, pipe the output into the PR/comment, and keep the
+repo diff clean — the analysis travels in the description, not the tree.
+
+```bash
+# .ai-docs/ is gitignored; the template + rendered output never get committed
+projected-source render --no-header .ai-docs/pr-description.md.j2 .ai-docs/pr-description.md
+gh pr edit 123 --body-file .ai-docs/pr-description.md
+```
+
+- Use `--no-header` so no render metadata leaks into the description.
+- `code()` extracts become live GitHub permalinks. Pin them with `ref=` (or a
+  block-level `set_code_context(ref=...)`) to a commit that actually contains the
+  code you're quoting — handy when the PR branch has since changed those lines.
+- Collapse long analysis behind `<details>` blocks so the description stays
+  scannable.
+
 ## Template Functions
 
 ### code() - Extract code with GitHub permalinks
