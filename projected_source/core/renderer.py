@@ -376,6 +376,8 @@ class TemplateRenderer:
                     ".c": "c",
                     ".py": "python",
                     ".js": "javascript",
+                    ".mjs": "javascript",
+                    ".cjs": "javascript",
                     ".ts": "typescript",
                     ".tsx": "tsx",
                     ".mts": "typescript",

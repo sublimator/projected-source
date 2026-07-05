@@ -35,6 +35,9 @@ EXTRACTORS = {
     ".tsx": TypeScriptExtractor,  # TSX (React) — tsx=True set via get_extractor
     ".mts": TypeScriptExtractor,  # TypeScript ES module
     ".cts": TypeScriptExtractor,  # TypeScript CommonJS module
+    ".js": TypeScriptExtractor,  # JavaScript — TS grammar parses plain JS
+    ".mjs": TypeScriptExtractor,  # JavaScript ES module
+    ".cjs": TypeScriptExtractor,  # JavaScript CommonJS module
     ".java": JavaExtractor,  # Java
     ".rs": RustExtractor,  # Rust
     ".lean": LeanExtractor,  # Lean 4
