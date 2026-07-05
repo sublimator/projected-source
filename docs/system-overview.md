@@ -1,14 +1,14 @@
 <!--
 rendered_from: system-overview.md.j2
-rendered_at: 2026-06-28T12:13:21Z
+rendered_at: 2026-07-05T10:16:44Z
 branch: main
-commit: 30cfd7a
-commit_message: fix: extractor/render/permalink papercuts (overloads, frontmatter, untracked files)
+commit: bd702f2
+commit_message: ci: latest-deps matrix leg, cli smoke, javascript extraction tests
 -->
 
 ---
 
-<sub>Last updated: 2026-06-28 | branch: main | commit: 30cfd7a (fix: extractor/render/permalink papercuts (overloads, frontmatter, untracked files))</sub>
+<sub>Last updated: 2026-07-05 | branch: main | commit: bd702f2 (ci: latest-deps matrix leg, cli smoke, javascript extraction tests)</sub>
 
 ---
 
@@ -33,7 +33,7 @@ Before diving into how extraction works, let's look at the types that flow throu
 
 Every time code is extracted from a source file — whether a function, struct, or marker region — the result is packaged as an `ExtractionResult`. This dataclass carries the extracted text along with precise location metadata:
 
-📍 [`projected_source/languages/extraction_result.py:9-36`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/languages/extraction_result.py#L9-L36)
+📍 [`projected_source/languages/extraction_result.py:9-36`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/languages/extraction_result.py#L9-L36)
 ```python
    9 @dataclass
   10 class ExtractionResult:
@@ -71,7 +71,7 @@ The `to_tuple()` method exists for backwards compatibility — most of the extra
 
 When validating that documentation covers code changes, individual changed regions are represented as `ChangeRegion` — a simple dataclass tying a file path to a line range:
 
-📍 [`projected_source/core/changes_set.py:15-24`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/changes_set.py#L15-L24)
+📍 [`projected_source/core/changes_set.py:15-24`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/changes_set.py#L15-L24)
 ```python
   15 @dataclass
   16 class ChangeRegion:
@@ -91,7 +91,7 @@ When validating that documentation covers code changes, individual changed regio
 
 The system supports multiple languages through a simple registry pattern. Each file extension maps to an extractor class:
 
-📍 [`projected_source/languages/__init__.py:19-41`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/languages/__init__.py#L19-L41)
+📍 [`projected_source/languages/__init__.py:19-44`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/languages/__init__.py#L19-L44)
 ```python
   19 EXTRACTORS = {
   20     ".cpp": CppExtractor,
@@ -112,46 +112,49 @@ The system supports multiple languages through a simple registry pattern. Each f
   35     ".tsx": TypeScriptExtractor,  # TSX (React) — tsx=True set via get_extractor
   36     ".mts": TypeScriptExtractor,  # TypeScript ES module
   37     ".cts": TypeScriptExtractor,  # TypeScript CommonJS module
-  38     ".java": JavaExtractor,  # Java
-  39     ".rs": RustExtractor,  # Rust
-  40     ".lean": LeanExtractor,  # Lean 4
-  41 }
+  38     ".js": TypeScriptExtractor,  # JavaScript — TS grammar parses plain JS
+  39     ".mjs": TypeScriptExtractor,  # JavaScript ES module
+  40     ".cjs": TypeScriptExtractor,  # JavaScript CommonJS module
+  41     ".java": JavaExtractor,  # Java
+  42     ".rs": RustExtractor,  # Rust
+  43     ".lean": LeanExtractor,  # Lean 4
+  44 }
 ```
 
 When a `code()` call needs to extract from a file, it calls `get_extractor()` which looks up the right class by file extension and instantiates it:
 
-📍 [`projected_source/languages/__init__.py:44-66`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/languages/__init__.py#L44-L66)
+📍 [`projected_source/languages/__init__.py:47-69`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/languages/__init__.py#L47-L69)
 ```python
-  44 def get_extractor(file_path: Path):
-  45     """
-  46     Get the appropriate extractor for a file based on its extension.
-  47 
-  48     Args:
-  49         file_path: Path to the file
+  47 def get_extractor(file_path: Path):
+  48     """
+  49     Get the appropriate extractor for a file based on its extension.
   50 
-  51     Returns:
-  52         An extractor instance
+  51     Args:
+  52         file_path: Path to the file
   53 
-  54     Raises:
-  55         ValueError: If no extractor is available for the file type
-  56     """
-  57     suffix = file_path.suffix.lower()
-  58 
-  59     if suffix not in EXTRACTORS:
-  60         supported = ", ".join(EXTRACTORS.keys())
-  61         raise ValueError(f"No extractor for {suffix} files. Supported: {supported}")
-  62 
-  63     extractor_class = EXTRACTORS[suffix]
-  64     if extractor_class is TypeScriptExtractor and suffix == ".tsx":
-  65         return extractor_class(tsx=True)
-  66     return extractor_class()
+  54     Returns:
+  55         An extractor instance
+  56 
+  57     Raises:
+  58         ValueError: If no extractor is available for the file type
+  59     """
+  60     suffix = file_path.suffix.lower()
+  61 
+  62     if suffix not in EXTRACTORS:
+  63         supported = ", ".join(EXTRACTORS.keys())
+  64         raise ValueError(f"No extractor for {suffix} files. Supported: {supported}")
+  65 
+  66     extractor_class = EXTRACTORS[suffix]
+  67     if extractor_class is TypeScriptExtractor and suffix == ".tsx":
+  68         return extractor_class(tsx=True)
+  69     return extractor_class()
 ```
 
 ### BaseExtractor
 
 All language extractors inherit from `BaseExtractor`, which provides the tree-sitter parser setup, line extraction, and the marker system. The marker system lets you tag regions of source code with `//@@start name` and `//@@end name` comments, then extract just that region:
 
-📍 [`projected_source/core/extractor.py:17-134`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/extractor.py#L17-L134)
+📍 [`projected_source/core/extractor.py:17-134`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/extractor.py#L17-L134)
 ```python
   17 class BaseExtractor:
   18     """Base class for language-specific extractors."""
@@ -287,7 +290,7 @@ The `TemplateRenderer` is the heart of the system. It creates a Jinja2 environme
 
 When a renderer is created, it sets up the Jinja2 environment with the template directory as the loader root, and registers the extraction functions as globals:
 
-📍 [`projected_source/core/renderer.py:75-115`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/renderer.py#L75-L115)
+📍 [`projected_source/core/renderer.py:75-115`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/renderer.py#L75-L115)
 ```python
   75     def __init__(
   76         self,
@@ -336,7 +339,7 @@ When a renderer is created, it sets up the Jinja2 environment with the template 
 
 This is the workhorse. Every `{{ code('file.cpp', function='foo') }}` call in a template invokes `_code_function`. It resolves the file path, picks the right extractor, extracts the requested symbol, optionally generates a GitHub permalink, adds line numbers, and returns formatted markdown:
 
-📍 [`projected_source/core/renderer.py:120-404`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/renderer.py#L120-L404)
+📍 [`projected_source/core/renderer.py:120-406`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/renderer.py#L120-L406)
 ```python
  120     def _code_function(
  121         self,
@@ -597,32 +600,34 @@ This is the workhorse. Every `{{ code('file.cpp', function='foo') }}` call in a 
  376                     ".c": "c",
  377                     ".py": "python",
  378                     ".js": "javascript",
- 379                     ".ts": "typescript",
- 380                     ".tsx": "tsx",
- 381                     ".mts": "typescript",
- 382                     ".cts": "typescript",
- 383                     ".java": "java",
- 384                     ".rs": "rust",
- 385                     ".go": "go",
- 386                     ".proto": "protobuf",
- 387                 }
- 388                 language = language_map.get(suffix, "text")
- 389 
- 390             # Build final output
- 391             return f"{header}\n```{language}\n{code_text}\n```"
- 392 
- 393         except Exception as e:
- 394             error_msg = f"❌ **ERROR**: {e}"
- 395             logger.error(f"Code extraction failed: {e}")
- 396             # Collect file as fixture if collection is enabled
- 397             if resolved_path is not None:
- 398                 _collect_error_fixture(resolved_path, str(e))
- 399             return error_msg
- 400 
- 401         finally:
- 402             # Clean up temp file if we created one
- 403             if tmp_file and tmp_file.exists():
- 404                 tmp_file.unlink()
+ 379                     ".mjs": "javascript",
+ 380                     ".cjs": "javascript",
+ 381                     ".ts": "typescript",
+ 382                     ".tsx": "tsx",
+ 383                     ".mts": "typescript",
+ 384                     ".cts": "typescript",
+ 385                     ".java": "java",
+ 386                     ".rs": "rust",
+ 387                     ".go": "go",
+ 388                     ".proto": "protobuf",
+ 389                 }
+ 390                 language = language_map.get(suffix, "text")
+ 391 
+ 392             # Build final output
+ 393             return f"{header}\n```{language}\n{code_text}\n```"
+ 394 
+ 395         except Exception as e:
+ 396             error_msg = f"❌ **ERROR**: {e}"
+ 397             logger.error(f"Code extraction failed: {e}")
+ 398             # Collect file as fixture if collection is enabled
+ 399             if resolved_path is not None:
+ 400                 _collect_error_fixture(resolved_path, str(e))
+ 401             return error_msg
+ 402 
+ 403         finally:
+ 404             # Clean up temp file if we created one
+ 405             if tmp_file and tmp_file.exists():
+ 406                 tmp_file.unlink()
 ```
 
 The function handles a wide variety of extraction types — functions, structs, variables, macros, protobuf messages, enums, services, markers, and raw line ranges. It also supports nesting: you can extract a marker *within* a function by passing both `function=` and `marker=`.
@@ -633,101 +638,101 @@ When a `ChangesSet` is provided (validation mode), each extraction automatically
 
 Templates can compose by including other files. Plain markdown files are included verbatim; `.j2` files are rendered as templates with full access to `code()` and other functions:
 
-📍 [`projected_source/core/renderer.py:516-539`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/renderer.py#L516-L539)
+📍 [`projected_source/core/renderer.py:518-541`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/renderer.py#L518-L541)
 ```python
- 516     def _include_function(self, path: str) -> str:
- 517         """
- 518         Include a file into the template output.
- 519 
- 520         .j2 files are rendered as Jinja2 templates (with access to code() etc).
- 521         All other files are included as raw text.
- 522 
- 523         Args:
- 524             path: Path relative to the template directory
- 525 
- 526         Returns:
- 527             File contents (rendered if .j2)
- 528 
- 529         Examples:
- 530             {{ include('background.md') }}
- 531             {{ include('details.md.j2') }}
- 532             {{ include('sections/intro.md') }}
- 533         """
- 534         if path.endswith(".j2"):
- 535             template = self.env.get_template(path)
- 536             return template.render()
- 537         else:
- 538             full_path = self.template_dir / path
- 539             return full_path.read_text()
+ 518     def _include_function(self, path: str) -> str:
+ 519         """
+ 520         Include a file into the template output.
+ 521 
+ 522         .j2 files are rendered as Jinja2 templates (with access to code() etc).
+ 523         All other files are included as raw text.
+ 524 
+ 525         Args:
+ 526             path: Path relative to the template directory
+ 527 
+ 528         Returns:
+ 529             File contents (rendered if .j2)
+ 530 
+ 531         Examples:
+ 532             {{ include('background.md') }}
+ 533             {{ include('details.md.j2') }}
+ 534             {{ include('sections/intro.md') }}
+ 535         """
+ 536         if path.endswith(".j2"):
+ 537             template = self.env.get_template(path)
+ 538             return template.render()
+ 539         else:
+ 540             full_path = self.template_dir / path
+ 541             return full_path.read_text()
 ```
 
 ### Custom Tags
 
 Projects can extend the template environment by placing a `.projected-source.py` file in the project. The renderer discovers it by walking up from the template directory to the git root:
 
-📍 [`projected_source/core/renderer.py:574-602`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/renderer.py#L574-L602)
+📍 [`projected_source/core/renderer.py:576-604`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/renderer.py#L576-L604)
 ```python
- 574     def _find_custom_tags_file(self, start_path: Path) -> Optional[Path]:
- 575         """
- 576         Find .projected-source.py file by walking up from start_path.
- 577         Stops at git root to avoid escaping the repository.
- 578 
- 579         Args:
- 580             start_path: Path to start searching from (usually template dir)
- 581 
- 582         Returns:
- 583             Path to .projected-source.py if found, None otherwise
- 584         """
- 585         current = start_path.resolve()
- 586 
- 587         # Use repo_path as the boundary (it's already the git root)
- 588         git_root = self.repo_path
- 589 
- 590         while current >= git_root:
- 591             custom_file = current / ".projected-source.py"
- 592             if custom_file.exists():
- 593                 logger.info(f"Found custom tags file at {custom_file}")
- 594                 return custom_file
- 595 
- 596             # Move up one directory
- 597             parent = current.parent
- 598             if parent == current:  # Reached filesystem root
- 599                 break
- 600             current = parent
- 601 
- 602         return None
+ 576     def _find_custom_tags_file(self, start_path: Path) -> Optional[Path]:
+ 577         """
+ 578         Find .projected-source.py file by walking up from start_path.
+ 579         Stops at git root to avoid escaping the repository.
+ 580 
+ 581         Args:
+ 582             start_path: Path to start searching from (usually template dir)
+ 583 
+ 584         Returns:
+ 585             Path to .projected-source.py if found, None otherwise
+ 586         """
+ 587         current = start_path.resolve()
+ 588 
+ 589         # Use repo_path as the boundary (it's already the git root)
+ 590         git_root = self.repo_path
+ 591 
+ 592         while current >= git_root:
+ 593             custom_file = current / ".projected-source.py"
+ 594             if custom_file.exists():
+ 595                 logger.info(f"Found custom tags file at {custom_file}")
+ 596                 return custom_file
+ 597 
+ 598             # Move up one directory
+ 599             parent = current.parent
+ 600             if parent == current:  # Reached filesystem root
+ 601                 break
+ 602             current = parent
+ 603 
+ 604         return None
 ```
 
 ### Rendering
 
 The public API is straightforward — `render_template()` for named templates and `render_template_file()` for file paths:
 
-📍 [`projected_source/core/renderer.py:652-675`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/renderer.py#L652-L675)
+📍 [`projected_source/core/renderer.py:654-677`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/renderer.py#L654-L677)
 ```python
- 652     def render_template(self, template_name: str, **context) -> str:
- 653         """
- 654         Render a template with the given context.
- 655 
- 656         Args:
- 657             template_name: Name of the template file
- 658             **context: Additional context variables
- 659 
- 660         Returns:
- 661             Rendered template as string
- 662         """
- 663         try:
- 664             # Load custom tags from .projected-source.py if available
- 665             template_path = self.template_dir / template_name
- 666             self._load_custom_tags(template_path)
- 667 
- 668             template = self.env.get_template(template_name)
- 669             return template.render(**context)
- 670         except jinja2.TemplateNotFound:
- 671             logger.error(f"Template not found: {template_name}")
- 672             raise
- 673         except Exception as e:
- 674             logger.error(f"Template rendering failed: {e}")
- 675             raise
+ 654     def render_template(self, template_name: str, **context) -> str:
+ 655         """
+ 656         Render a template with the given context.
+ 657 
+ 658         Args:
+ 659             template_name: Name of the template file
+ 660             **context: Additional context variables
+ 661 
+ 662         Returns:
+ 663             Rendered template as string
+ 664         """
+ 665         try:
+ 666             # Load custom tags from .projected-source.py if available
+ 667             template_path = self.template_dir / template_name
+ 668             self._load_custom_tags(template_path)
+ 669 
+ 670             template = self.env.get_template(template_name)
+ 671             return template.render(**context)
+ 672         except jinja2.TemplateNotFound:
+ 673             logger.error(f"Template not found: {template_name}")
+ 674             raise
+ 675         except Exception as e:
+ 676             logger.error(f"Template rendering failed: {e}")
+ 677             raise
 ```
 
 ---
@@ -740,7 +745,7 @@ Every extracted code block can include a clickable GitHub permalink. The `GitHub
 
 Repository info is loaded on first access. The class auto-detects the GitHub URL from the git remote, handling both SSH and HTTPS formats:
 
-📍 [`projected_source/core/github.py:186-228`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/github.py#L186-L228)
+📍 [`projected_source/core/github.py:186-228`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/github.py#L186-L228)
 ```python
  186     def _init_repo_info(self):
  187         """Lazy initialization of repository information."""
@@ -793,7 +798,7 @@ When you're working on a file with uncommitted changes, the line numbers in your
 
 The full-diff parser builds a line-by-line mapping from new to old positions:
 
-📍 [`projected_source/core/github.py:37-83`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/github.py#L37-L83)
+📍 [`projected_source/core/github.py:37-83`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/github.py#L37-L83)
 ```python
   37 def build_line_mapping(diff_output: str) -> Dict[int, Optional[int]]:
   38     """
@@ -846,7 +851,7 @@ The full-diff parser builds a line-by-line mapping from new to old positions:
 
 This mapping is used by `map_to_committed_line()`, which falls back gracefully — if a line was newly added, it finds the nearest existing line before it:
 
-📍 [`projected_source/core/github.py:138-173`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/github.py#L138-L173)
+📍 [`projected_source/core/github.py:138-173`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/github.py#L138-L173)
 ```python
  138 def map_line_to_committed_full(new_line: int, diff_output: str) -> int:
  139     """
@@ -890,7 +895,7 @@ This mapping is used by `map_to_committed_line()`, which falls back gracefully �
 
 The `get_permalink()` method ties it all together — it maps lines, builds the URL with line anchors, and returns a markdown link:
 
-📍 [`projected_source/core/github.py:364-455`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/github.py#L364-L455)
+📍 [`projected_source/core/github.py:364-455`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/github.py#L364-L455)
 ```python
  364     def get_permalink(
  365         self, file_path: Path, start_line: int = None, end_line: int = None, display_committed_lines: bool = True
@@ -990,7 +995,7 @@ The `get_permalink()` method ties it all together — it maps lines, builds the 
 
 For deeper code archaeology, `blame=True` annotates each line with its author, date, and commit hash:
 
-📍 [`projected_source/core/github.py:518-548`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/github.py#L518-L548)
+📍 [`projected_source/core/github.py:518-548`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/github.py#L518-L548)
 ```python
  518     def format_with_blame(self, code_text: str, start_line: int, file_path: Path) -> str:
  519         """
@@ -1035,7 +1040,7 @@ One of the most powerful features: projected-source can verify that your documen
 
 The `ChangesSet` class tracks changed regions as a set of non-overlapping intervals per file. It supports adding regions (which auto-merge overlapping ranges), subtracting regions (which can split intervals), and querying what's left uncovered:
 
-📍 [`projected_source/core/changes_set.py:27-252`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/changes_set.py#L27-L252)
+📍 [`projected_source/core/changes_set.py:27-252`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/changes_set.py#L27-L252)
 ```python
   27 class ChangesSet:
   28     """
@@ -1269,7 +1274,7 @@ The `ChangesSet` class tracks changed regions as a set of non-overlapping interv
 
 `from_diff()` parses unified diff output to populate the set. It supports both simple base refs (`origin/main`) and explicit ranges (`HEAD~5..HEAD~2`):
 
-📍 [`projected_source/core/changes_set.py:40-73`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/changes_set.py#L40-L73)
+📍 [`projected_source/core/changes_set.py:40-73`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/changes_set.py#L40-L73)
 ```python
   40     @classmethod
   41     def from_diff(cls, base: Optional[str] = None, repo_path: Optional[Path] = None) -> "ChangesSet":
@@ -1309,7 +1314,7 @@ The `ChangesSet` class tracks changed regions as a set of non-overlapping interv
 
 The diff parser walks through hunk headers and added lines to build up the initial set of changed regions:
 
-📍 [`projected_source/core/changes_set.py:105-148`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/changes_set.py#L105-L148)
+📍 [`projected_source/core/changes_set.py:105-148`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/changes_set.py#L105-L148)
 ```python
  105     def _parse_diff(self, diff_output: str, repo_path: Path) -> None:
  106         """Parse unified diff output and populate regions."""
@@ -1361,7 +1366,7 @@ The diff parser walks through hunk headers and added lines to build up the initi
 
 As templates render, each `code()` call subtracts its extracted region. The `subtract()` method handles partial overlaps — if documentation covers the middle of a changed region, it splits into two uncovered remainders:
 
-📍 [`projected_source/core/changes_set.py:183-223`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/changes_set.py#L183-L223)
+📍 [`projected_source/core/changes_set.py:183-223`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/changes_set.py#L183-L223)
 ```python
  183     def subtract(self, file_path: Path, start: int, end: int) -> None:
  184         """
@@ -1408,7 +1413,7 @@ As templates render, each `code()` call subtracts its extracted region. The `sub
 
 After rendering, `uncovered()` returns whatever's left:
 
-📍 [`projected_source/core/changes_set.py:225-231`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/core/changes_set.py#L225-L231)
+📍 [`projected_source/core/changes_set.py:225-231`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/core/changes_set.py#L225-L231)
 ```python
  225     def uncovered(self) -> List[ChangeRegion]:
  226         """Return list of regions not yet claimed by documentation."""
@@ -1425,7 +1430,7 @@ After rendering, `uncovered()` returns whatever's left:
 
 The CLI is built with Click. The main entry point registers all commands:
 
-📍 [`projected_source/cli/__init__.py:19-29`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/cli/__init__.py#L19-L29)
+📍 [`projected_source/cli/__init__.py:19-29`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/cli/__init__.py#L19-L29)
 ```python
   19 @click.group()
   20 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
@@ -1446,7 +1451,7 @@ The primary command renders `.md.j2` templates. It handles single files, directo
 
 Single-file rendering resolves the template path, creates a `TemplateRenderer`, and writes the output:
 
-📍 [`projected_source/cli/render.py:392-422`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/cli/render.py#L392-L422)
+📍 [`projected_source/cli/render.py:392-422`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/cli/render.py#L392-L422)
 ```python
  392 def _render_file(
  393     input_file, output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None, header=False
@@ -1483,7 +1488,7 @@ Single-file rendering resolves the template path, creates a `TemplateRenderer`, 
 
 Directory rendering walks the tree and renders all `.j2` files:
 
-📍 [`projected_source/cli/render.py:425-482`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/cli/render.py#L425-L482)
+📍 [`projected_source/cli/render.py:425-482`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/cli/render.py#L425-L482)
 ```python
  425 def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False, changes_set=None, header=False):
  426     """Render all templates in a directory."""
@@ -1549,7 +1554,7 @@ Directory rendering walks the tree and renders all `.j2` files:
 
 The `list-functions` command is essential for authoring templates — it shows every extractable symbol in a file, including the parameter you'd use in a `code()` call:
 
-📍 [`projected_source/cli/list_symbols.py:15-107`](https://github.com/sublimator/projected-source/blob/30cfd7aeff1ec4a742c70c79cfe3158d90b0f984/projected_source/cli/list_symbols.py#L15-L107)
+📍 [`projected_source/cli/list_symbols.py:15-107`](https://github.com/sublimator/projected-source/blob/bd702f2d7df21420b8d82d4b3acba4d92bfee83a/projected_source/cli/list_symbols.py#L15-L107)
 ```python
   15 @click.command("list-functions")
   16 @click.argument("file", required=False, type=click.Path(exists=True, dir_okay=False))
