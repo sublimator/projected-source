@@ -140,3 +140,37 @@ class TestDisplayBranchCollapse:
         assert "added.py:1-3" in permalink, (
             f"Expected display 'added.py:1-3' when display_committed_lines=False, got: {permalink}"
         )
+
+
+class TestPermalinkAtRef:
+    """Ref-pinned extracts should link to blob/<resolved-sha>/<path>."""
+
+    def test_links_to_resolved_sha(self, repo_with_remote):
+        gh = GitHubIntegration(repo_with_remote)
+        sha = (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_with_remote)
+            .decode()
+            .strip()
+        )
+        link = gh.get_permalink_at_ref(repo_with_remote / "tracked.txt", "HEAD", 1, 1)
+        assert link is not None
+        assert f"blob/{sha}/tracked.txt#L1" in link
+        assert "tracked.txt:1 @ HEAD" in link
+
+    def test_line_range_anchors(self, repo_with_remote):
+        gh = GitHubIntegration(repo_with_remote)
+        link = gh.get_permalink_at_ref(repo_with_remote / "tracked.txt", "HEAD", 1, 3)
+        assert link is not None
+        assert "#L1-L3" in link
+
+    def test_unresolvable_ref_returns_none(self, repo_with_remote):
+        gh = GitHubIntegration(repo_with_remote)
+        assert gh.get_permalink_at_ref(repo_with_remote / "tracked.txt", "no-such-ref", 1, 1) is None
+
+    def test_file_absent_at_ref_returns_none(self, repo_with_remote):
+        (repo_with_remote / "newfile.txt").write_text("new\n")
+        _git(repo_with_remote, "add", "newfile.txt")
+        _git(repo_with_remote, "commit", "-m", "add newfile")
+        gh = GitHubIntegration(repo_with_remote)
+        # newfile.txt does not exist at HEAD~1
+        assert gh.get_permalink_at_ref(repo_with_remote / "newfile.txt", "HEAD~1", 1, 1) is None

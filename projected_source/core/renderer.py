@@ -346,12 +346,20 @@ class TemplateRenderer:
                     display_path, start_line, end_line, display_committed_lines=self.remap_dirty_lines
                 )
             else:
-                display_rel = display_path.relative_to(self.repo_path) if display_path.is_absolute() else display_path
-                ref_suffix = f" @ {active_ref}" if active_ref else ""
-                if display_start == display_end:
-                    header = f"📍 `{display_rel}:{display_start}{ref_suffix}`"
-                else:
-                    header = f"📍 `{display_rel}:{display_start}-{display_end}{ref_suffix}`"
+                header = None
+                if github and active_ref:
+                    # Ref-pinned extracts get a permalink at that ref — the
+                    # content and line numbers come from the ref's tree.
+                    header = self.github.get_permalink_at_ref(display_path, active_ref, start_line, end_line)
+                if header is None:
+                    display_rel = (
+                        display_path.relative_to(self.repo_path) if display_path.is_absolute() else display_path
+                    )
+                    ref_suffix = f" @ {active_ref}" if active_ref else ""
+                    if display_start == display_end:
+                        header = f"📍 `{display_rel}:{display_start}{ref_suffix}`"
+                    else:
+                        header = f"📍 `{display_rel}:{display_start}-{display_end}{ref_suffix}`"
 
             # Format code with line numbers and/or blame
             # Use remapped line numbers for display if remap_dirty_lines is enabled

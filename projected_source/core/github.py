@@ -308,6 +308,61 @@ class GitHubIntegration:
             loc = str(rel_path)
         return f"📍 `{loc}`{suffix}"
 
+    def get_permalink_at_ref(
+        self, file_path: Path, ref: str, start_line: int = None, end_line: int = None
+    ) -> Optional[str]:
+        """
+        Generate a GitHub permalink pinned to a specific ref.
+
+        Ref-based extraction reads the file from the ref's tree, so the line
+        numbers are already committed line numbers at that commit — no
+        dirty-file remapping applies. Returns None when no valid link can be
+        built (non-GitHub remote, unresolvable ref, or file absent at the
+        ref); the caller falls back to a plain reference.
+        """
+        self._init_repo_info()
+        if not self.github_url:
+            return None
+
+        try:
+            if file_path.is_absolute():
+                rel_path = file_path.relative_to(self.repo_path)
+            else:
+                rel_path = file_path
+        except ValueError:
+            rel_path = file_path
+
+        try:
+            sha = (
+                subprocess.check_output(
+                    ["git", "rev-parse", "--verify", f"{ref}^{{commit}}"],
+                    cwd=self.repo_path,
+                    stderr=subprocess.DEVNULL,
+                )
+                .decode()
+                .strip()
+            )
+        except subprocess.CalledProcessError:
+            logger.warning(f"Cannot resolve ref {ref!r}; suppressing permalink")
+            return None
+
+        if not self.exists_at_commit(file_path, sha):
+            logger.warning(f"{rel_path} not present at {ref}; suppressing permalink")
+            return None
+
+        url = f"{self.github_url}/blob/{sha}/{rel_path}"
+        if start_line is not None:
+            if end_line and end_line != start_line:
+                loc = f"{rel_path}:{start_line}-{end_line}"
+                url += f"#L{start_line}-L{end_line}"
+            else:
+                loc = f"{rel_path}:{start_line}"
+                url += f"#L{start_line}"
+        else:
+            loc = str(rel_path)
+
+        return f"📍 [`{loc} @ {ref}`]({url})"
+
     def get_diff_output(self, file_path: Path) -> str:
         """
         Get the full diff output for a file (cached).
