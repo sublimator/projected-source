@@ -12,6 +12,11 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.13"]
+        # locked = uv.lock as committed; latest = freshest versions the
+        # constraints allow — what a `uv tool install` resolves to. The
+        # latest leg exists because tree-sitter 0.26.0 segfaulted with
+        # 0.23-era grammar wheels while the locked suite stayed green.
+        deps: [locked, latest]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -25,15 +30,34 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
 
-      - name: Install dependencies
+      - name: Install dependencies (${{ matrix.deps }})
         # Compiles tree-sitter-proto and tree-sitter-lean grammars from source (git deps).
-        run: uv sync --dev
+        run: |
+          if [ "${{ matrix.deps }}" = "latest" ]; then
+            uv sync --dev --upgrade
+          else
+            uv sync --dev
+          fi
 
       - name: Lint (ruff)
+        if: matrix.deps == 'locked'
         run: uv run ruff check projected_source tests
 
       - name: Type check (mypy)
+        if: matrix.deps == 'locked'
         run: uv run mypy projected_source
 
       - name: Test (pytest)
         run: uv run pytest -q
+
+      - name: CLI smoke — tree-sitter extraction across grammars
+        # Exercises the installed entry point on real files per grammar;
+        # a core/grammar ABI mismatch segfaults these outright.
+        run: |
+          uv run projected-source list-functions projected_source/core/renderer.py
+          uv run projected-source list-functions tests/fixtures/complete.cpp
+          uv run projected-source list-functions tests/fixtures/sample.mjs
+          mkdir -p /tmp/ps-smoke
+          printf '{{ code("tests/fixtures/sample.mjs", marker="smoke-section", github=False) }}\n' > /tmp/ps-smoke/smoke.md.j2
+          uv run projected-source render /tmp/ps-smoke/smoke.md.j2 /tmp/ps-smoke/smoke.md
+          grep -q "session.close()" /tmp/ps-smoke/smoke.md
