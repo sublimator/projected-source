@@ -12,7 +12,8 @@ authors = [{name = "Nicholas Dudfield"}]
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "tree-sitter>=0.25",
+    # tree-sitter 0.26.0 segfaults with 0.23-era grammar wheels
+    "tree-sitter>=0.25,<0.26",
     "tree-sitter-cpp>=0.23.4",
     "jinja2>=3.1",
     "click>=8.3",
