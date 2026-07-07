@@ -971,7 +971,7 @@ class TemplateRenderer:
 
         for i, line in enumerate(lines):
             line_num = start_line + i
-            numbered_lines.append(f"{line_num:4} {line}")
+            numbered_lines.append(f"{line_num:4} {line}" if line else f"{line_num:4}")
 
         return "\n".join(numbered_lines)
 

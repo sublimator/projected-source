@@ -31,6 +31,14 @@ def _write_cpp_marker_source(path):
     )
 
 
+def test_line_numbers_do_not_add_trailing_space_to_blank_lines(tmp_path):
+    renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+
+    result = renderer._add_line_numbers("alpha\n\nbeta", 10)
+
+    assert result.splitlines()[1] == "  11"
+
+
 def test_collect_error_fixtures_writes_manifest_on_failure(tmp_path, monkeypatch):
     """
     When --collect-error-fixtures is on and a template fails to render,
