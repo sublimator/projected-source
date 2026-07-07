@@ -34,3 +34,36 @@ class ExtractionResult:
     def to_tuple(self) -> tuple:
         """For backwards compatibility."""
         return (self.text, self.start_line, self.end_line)
+
+
+@dataclass
+class EnclosedMarkerResult:
+    """A marker extraction plus the enclosing source range that contains it."""
+
+    marker_text: str
+    marker_start_line: int
+    marker_end_line: int
+    enclosure_text: str
+    enclosure_start_line: int
+    enclosure_end_line: int
+    enclosure_kind: Optional[str] = None
+    enclosure_name: Optional[str] = None
+
+    @property
+    def text(self) -> str:
+        """Marker text, matching the legacy extraction result shape."""
+        return self.marker_text
+
+    @property
+    def start_line(self) -> int:
+        """Marker start line, matching the legacy extraction result shape."""
+        return self.marker_start_line
+
+    @property
+    def end_line(self) -> int:
+        """Marker end line, matching the legacy extraction result shape."""
+        return self.marker_end_line
+
+    def to_tuple(self) -> tuple:
+        """For backwards compatibility with marker extraction APIs."""
+        return (self.marker_text, self.marker_start_line, self.marker_end_line)

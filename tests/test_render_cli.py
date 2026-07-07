@@ -12,9 +12,23 @@ Covers:
 
 import json
 
+import pytest
 from click.testing import CliRunner
 
 from projected_source.cli import cli
+from projected_source.core.renderer import TemplateRenderer
+
+
+def _write_cpp_marker_source(path):
+    path.write_text(
+        "void f() {\n"
+        "    int before = 0;\n"
+        "    //@@start core\n"
+        "    int shown = 1;\n"
+        "    //@@end core\n"
+        "    return;\n"
+        "}\n"
+    )
 
 
 def test_collect_error_fixtures_writes_manifest_on_failure(tmp_path, monkeypatch):
@@ -197,6 +211,31 @@ def test_header_kept_after_yaml_frontmatter(tmp_path):
     assert lines.index("title: My Doc") < closing_idx
 
 
+def test_header_kept_after_included_frontmatter(tmp_path):
+    """Top-level header handling runs after includes have rendered."""
+    (tmp_path / "child.md").write_text("---\ntitle: Included\n---\n\n# Included\n")
+    main = tmp_path / "main.md.j2"
+    main.write_text("{{ include('child.md') }}\n\nBody\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["render", str(main), "-", "--repo-path", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    out = _strip_ansi(result.output)
+    lines = out.splitlines()
+
+    assert lines[0] == "---"
+    assert "title: Included" in lines
+    closing_idx = lines.index("---", 1)
+    header_idx = next(i for i, ln in enumerate(lines) if ln.startswith("<!--"))
+    assert header_idx > closing_idx
+    assert out.count("rendered_from: main.md.j2") == 1
+    assert "rendered_from: child" not in out
+
+
 def test_header_prepended_when_no_frontmatter(tmp_path):
     """A body that merely contains a `---` rule (but doesn't start with one) is
     not treated as frontmatter; the header is prepended at the very top."""
@@ -212,3 +251,400 @@ def test_header_prepended_when_no_frontmatter(tmp_path):
     assert result.exit_code == 0, result.output
     out = _strip_ansi(result.output)
     assert out.lstrip().startswith("<!--"), f"header not prepended; got: {out[:40]!r}"
+
+
+def test_render_enclosure_context_default(tmp_path):
+    """Marker-only code() calls get enclosure context by default."""
+    source = tmp_path / "example.cpp"
+    _write_cpp_marker_source(source)
+
+    template = "{{ code('example.cpp', marker='core', github=False) }}\n"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "render",
+            "-",
+            "-",
+            "--repo-path",
+            str(tmp_path),
+            "--no-header",
+        ],
+        input=template,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "   1 void f() {" in result.output
+    assert "   2     int before = 0;" in result.output
+    assert "   4     int shown = 1;" in result.output
+    assert "   6     return;" in result.output
+    assert "   7 }" in result.output
+
+
+def test_render_enclosure_context_cli_default_can_be_overridden(tmp_path):
+    """Per-call enclosure_context=0 opts out of the default."""
+    source = tmp_path / "example.cpp"
+    _write_cpp_marker_source(source)
+
+    template = "{{ code('example.cpp', marker='core', enclosure_context=0, github=False) }}\n"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "render",
+            "-",
+            "-",
+            "--repo-path",
+            str(tmp_path),
+            "--no-header",
+        ],
+        input=template,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "void f()" not in result.output
+    assert "   4     int shown = 1;" in result.output
+
+
+def test_render_enclosure_context_cli_option_can_change_default(tmp_path):
+    """--enclosure-context overrides the built-in marker context default."""
+    source = tmp_path / "example.cpp"
+    _write_cpp_marker_source(source)
+
+    template = "{{ code('example.cpp', marker='core', github=False) }}\n"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "render",
+            "-",
+            "-",
+            "--repo-path",
+            str(tmp_path),
+            "--no-header",
+            "--enclosure-context",
+            "1",
+        ],
+        input=template,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "   1 void f() {" in result.output
+    assert "   2     int before = 0;" not in result.output
+    assert "   4     int shown = 1;" in result.output
+    assert "   6     return;" not in result.output
+    assert "   7 }" in result.output
+
+
+def test_render_enclosure_context_cli_zero_disables_default(tmp_path):
+    """--enclosure-context 0 globally disables default marker enclosure context."""
+    source = tmp_path / "example.cpp"
+    _write_cpp_marker_source(source)
+
+    template = "{{ code('example.cpp', marker='core', github=False) }}\n"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "render",
+            "-",
+            "-",
+            "--repo-path",
+            str(tmp_path),
+            "--no-header",
+            "--enclosure-context",
+            "0",
+        ],
+        input=template,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "void f()" not in result.output
+    assert "int before" not in result.output
+    assert "   4     int shown = 1;" in result.output
+    assert "return;" not in result.output
+
+
+def test_render_enclosure_context_cli_option_applies_to_file_render(tmp_path):
+    """The CLI option is threaded through single-file rendering."""
+    source = tmp_path / "example.cpp"
+    _write_cpp_marker_source(source)
+    template = tmp_path / "doc.md.j2"
+    output = tmp_path / "doc.md"
+    template.write_text("{{ code('example.cpp', marker='core', github=False) }}\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "render",
+            str(template),
+            str(output),
+            "--repo-path",
+            str(tmp_path),
+            "--no-header",
+            "--enclosure-context",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    rendered = output.read_text()
+    assert "   1 void f() {" in rendered
+    assert "   2     int before = 0;" not in rendered
+    assert "   4     int shown = 1;" in rendered
+    assert "   7 }" in rendered
+
+
+def test_render_enclosure_context_cli_option_applies_to_directory_render(tmp_path):
+    """The CLI option is threaded through directory rendering."""
+    source = tmp_path / "example.cpp"
+    _write_cpp_marker_source(source)
+    templates = tmp_path / "templates"
+    outputs = tmp_path / "out"
+    templates.mkdir()
+    (templates / "doc.md.j2").write_text("{{ code('example.cpp', marker='core', github=False) }}\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "render",
+            str(templates),
+            str(outputs),
+            "--repo-path",
+            str(tmp_path),
+            "--no-header",
+            "--enclosure-context",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    rendered = (outputs / "doc.md").read_text()
+    assert "void f()" not in rendered
+    assert "int before" not in rendered
+    assert "   4     int shown = 1;" in rendered
+    assert "return;" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("filename", "source", "inside", "outside"),
+    [
+        ("example.py", "# before\n#@@start section\nx = 1\n#@@end section\n# after\n", "x = 1", "# before"),
+        (
+            "Example.java",
+            "class Example {\n"
+            "  int before = 0;\n"
+            "  //@@start section\n"
+            "  int value = 1;\n"
+            "  //@@end section\n"
+            "  int after = 2;\n"
+            "}\n",
+            "int value = 1;",
+            "int before = 0;",
+        ),
+        (
+            "example.ts",
+            "const before = 0;\n"
+            "//@@start section\n"
+            "const value = 1;\n"
+            "//@@end section\n"
+            "const after = 2;\n",
+            "const value = 1;",
+            "const before = 0;",
+        ),
+        (
+            "example.rs",
+            "fn main() {\n"
+            "    let before = 0;\n"
+            "    //@@start section\n"
+            "    let value = 1;\n"
+            "    //@@end section\n"
+            "    let after = 2;\n"
+            "}\n",
+            "let value = 1;",
+            "let before = 0;",
+        ),
+        (
+            "Example.lean",
+            "def before := 0\n"
+            "-- @@start section\n"
+            "def value := 1\n"
+            "-- @@end section\n"
+            "def after := 2\n",
+            "def value := 1",
+            "def before := 0",
+        ),
+        (
+            "example.proto",
+            'syntax = "proto3";\n'
+            "message Before { string value = 1; }\n"
+            "//@@start section\n"
+            "message Value { string value = 1; }\n"
+            "//@@end section\n"
+            "message After { string value = 1; }\n",
+            "message Value",
+            "message Before",
+        ),
+    ],
+)
+def test_default_enclosure_context_falls_back_to_exact_marker_for_non_cpp(
+    tmp_path, filename, source, inside, outside
+):
+    """The built-in default is C++-only today; other languages keep exact markers."""
+    path = tmp_path / filename
+    path.write_text(source)
+    renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+
+    result = renderer._code_function(filename, marker="section", github=False)
+
+    assert "❌ **ERROR**" not in result
+    assert inside in result
+    assert outside not in result
+    assert "@@start" not in result
+    assert "@@end" not in result
+
+
+def test_explicit_enclosure_context_errors_for_unsupported_marker_language(tmp_path):
+    source = tmp_path / "example.py"
+    source.write_text("#@@start section\nx = 1\n#@@end section\n")
+    renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+
+    result = renderer._code_function("example.py", marker="section", enclosure_context=1, github=False)
+
+    assert "❌ **ERROR**" in result
+    assert "Auto marker enclosure not supported" in result
+
+
+def test_explicit_auto_enclosure_errors_for_unsupported_marker_language(tmp_path):
+    source = tmp_path / "example.py"
+    source.write_text("#@@start section\nx = 1\n#@@end section\n")
+    renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+
+    result = renderer._code_function("example.py", marker="section", enclosure="auto", github=False)
+
+    assert "❌ **ERROR**" in result
+    assert "Auto marker enclosure not supported" in result
+
+
+def test_explicit_auto_enclosure_errors_even_when_context_is_zero_for_unsupported_language(tmp_path):
+    source = tmp_path / "example.py"
+    source.write_text("#@@start section\nx = 1\n#@@end section\n")
+    renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+
+    result = renderer._code_function(
+        "example.py",
+        marker="section",
+        enclosure="auto",
+        enclosure_context=0,
+        github=False,
+    )
+
+    assert "❌ **ERROR**" in result
+    assert "Auto marker enclosure not supported" in result
+
+
+def test_explicit_auto_enclosure_with_zero_context_uses_cpp_enclosure_support(tmp_path):
+    source = tmp_path / "example.cpp"
+    source.write_text(
+        "void f() {\n"
+        "    //@@start core\n"
+        "    int shown = 1;\n"
+        "    //@@end core\n"
+        "}\n"
+    )
+    renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+
+    result = renderer._code_function(
+        "example.cpp",
+        marker="core",
+        enclosure="auto",
+        enclosure_context=0,
+        github=False,
+    )
+
+    assert "❌ **ERROR**" not in result
+    assert "`example.cpp:3`" in result
+    assert "   3     int shown = 1;" in result
+    assert "void f()" not in result
+
+
+def test_default_enclosure_context_falls_back_for_non_cpp_function_marker(tmp_path):
+    source = tmp_path / "example.rs"
+    source.write_text(
+        "fn worker() {\n"
+        "    let before = 0;\n"
+        "    //@@start inner\n"
+        "    let payload = 1;\n"
+        "    //@@end inner\n"
+        "    let after = 2;\n"
+        "}\n"
+    )
+    renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+
+    result = renderer._code_function("example.rs", function="worker", marker="inner", github=False)
+
+    assert "❌ **ERROR**" not in result
+    assert "let payload = 1;" in result
+    assert "fn worker()" not in result
+    assert "let before" not in result
+    assert "let after" not in result
+
+
+def test_explicit_enclosure_context_errors_for_non_cpp_function_marker(tmp_path):
+    source = tmp_path / "example.rs"
+    source.write_text(
+        "fn worker() {\n"
+        "    //@@start inner\n"
+        "    let payload = 1;\n"
+        "    //@@end inner\n"
+        "}\n"
+    )
+    renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+
+    result = renderer._code_function(
+        "example.rs",
+        function="worker",
+        marker="inner",
+        enclosure_context=1,
+        github=False,
+    )
+
+    assert "❌ **ERROR**" in result
+    assert "Function marker enclosure not supported" in result
+
+
+def test_explicit_message_marker_enclosure_errors_for_proto(tmp_path):
+    source = tmp_path / "example.proto"
+    source.write_text(
+        'syntax = "proto3";\n'
+        "message Envelope {\n"
+        "  //@@start field\n"
+        "  string value = 1;\n"
+        "  //@@end field\n"
+        "}\n"
+    )
+    renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+
+    result = renderer._code_function(
+        "example.proto",
+        message="Envelope",
+        marker="field",
+        enclosure_context=1,
+        github=False,
+    )
+
+    assert "❌ **ERROR**" in result
+    assert "Message marker enclosure not supported" in result
+
+
+def test_enclosure_auto_requires_marker(tmp_path):
+    source = tmp_path / "example.cpp"
+    _write_cpp_marker_source(source)
+    renderer = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+
+    result = renderer._code_function("example.cpp", function="f", enclosure="auto", github=False)
+
+    assert "❌ **ERROR**" in result
+    assert "enclosure requires marker=" in result

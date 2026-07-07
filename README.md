@@ -39,6 +39,9 @@ projected-source render template.md.j2 -
 
 # Render a directory of templates
 projected-source render docs/
+
+# Change C/C++ marker enclosure context globally; use 0 to disable
+projected-source render docs/ --enclosure-context 2
 ```
 
 ### In Templates
@@ -50,11 +53,20 @@ projected-source render docs/
 {# Extract a struct/class/enum #}
 {{ code('src/file.h', struct='Config') }}
 
-{# Extract between comment markers - for fragments of larger code #}
+{# Extract between comment markers. C/C++ markers include enclosing context by default. #}
 {{ code('src/file.cpp', marker='example-usage') }}
 
 {# Extract a marker within a function #}
 {{ code('src/file.cpp', function='main', marker='init-section') }}
+
+{# Overloaded function marker — disambiguate by signature #}
+{{ code('src/file.cpp', function='share', signature='TxSetShare', marker='encode') }}
+
+{# Override how many first/last enclosure lines to show #}
+{{ code('src/file.cpp', function='main', marker='init-section', enclosure_context=2) }}
+
+{# Render only the marker body, without enclosure context #}
+{{ code('src/file.cpp', marker='init-section', enclosure_context=0) }}
 
 {# Extract specific lines #}
 {{ code('src/file.cpp', lines=(10, 50)) }}

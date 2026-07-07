@@ -5,13 +5,15 @@ Jinja2 template rendering with code extraction functions.
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import tempfile
+from inspect import signature as inspect_signature
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 import jinja2
-from jinja2 import nodes
+from jinja2 import nodes, pass_context
 from jinja2.ext import Extension
 
 from ..languages import get_extractor
@@ -21,6 +23,18 @@ if TYPE_CHECKING:
     from .changes_set import ChangesSet
 
 logger = logging.getLogger(__name__)
+
+MARKER_DIRECTIVE_RE = re.compile(r"^\s*(?://|#|--)\s*@@(?:start|end)\b")
+FRONTMATTER_RE = re.compile(r"\A---[ \t]*\r?\n.*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|\Z)", re.DOTALL)
+PROJECTED_SOURCE_HEADER_RE = re.compile(
+    r"\A<!--\r?\n"
+    r"rendered_from: .*?\r?\n"
+    r"-->\r?\n"
+    r"\r?\n---\r?\n"
+    r"\r?\n<sub>Last updated: .*?</sub>\r?\n"
+    r"\r?\n---[ \t]*(?:\r?\n|\Z)",
+    re.DOTALL,
+)
 
 
 class CodeContextExtension(Extension):
@@ -78,6 +92,7 @@ class TemplateRenderer:
         repo_path: Path = None,
         remap_dirty_lines: bool = False,
         changes_set: "ChangesSet" = None,
+        default_enclosure_context: int = 3,
     ):
         """
         Initialize the renderer.
@@ -91,11 +106,14 @@ class TemplateRenderer:
             changes_set: Optional ChangesSet for tracking documentation coverage.
                          When provided, each code() call will mark its region as
                          covered. Check changes_set.uncovered() after rendering.
+            default_enclosure_context: Default C/C++ enclosure_context for marker code() calls
+                                      that do not specify it explicitly.
         """
         self.template_dir = template_dir or Path.cwd()
         self.repo_path = repo_path or Path.cwd()
         self.remap_dirty_lines = remap_dirty_lines
         self.changes_set = changes_set
+        self.default_enclosure_context = self._normalize_enclosure_context(default_enclosure_context)
         self.github = GitHubIntegration(self.repo_path)
 
         # Create Jinja2 environment
@@ -111,6 +129,7 @@ class TemplateRenderer:
         self.env.globals["ghc"] = self._code_function  # Alias for compatibility
         self.env.globals["ignore_changes"] = self._ignore_changes_function
         self.env.globals["include"] = self._include_function
+        self.env.globals["include_body"] = self._include_body_function
         self.env.globals["set_code_context"] = self._set_code_context_function
         self.env.globals["set_code_root"] = self._set_code_root_function
 
@@ -137,6 +156,8 @@ class TemplateRenderer:
         language: str = None,
         ref: str = None,
         root: str = None,
+        enclosure: str = None,
+        enclosure_context: int = None,
     ) -> str:
         """
         Universal code extraction function for templates.
@@ -159,6 +180,9 @@ class TemplateRenderer:
             blame: Include git blame info (default: False)
             line_numbers: Show line numbers (default: True)
             language: Language for syntax highlighting (auto-detected if None)
+            enclosure: Set to "auto" with C/C++ marker= to find the closest enclosing symbol.
+            enclosure_context: For supported marker extractions, show the first
+                               and last N lines of the enclosing symbol around the marker.
 
         Returns:
             Formatted markdown with code block
@@ -175,7 +199,21 @@ class TemplateRenderer:
         """
         tmp_file = None
         resolved_path: Optional[Path] = None
+        display_segments: Optional[List[Tuple[str, int, int]]] = None
         try:
+            context_lines = self._normalize_enclosure_context(
+                self.default_enclosure_context if enclosure_context is None else enclosure_context
+            )
+            enclosure_mode = (enclosure or "").lower()
+            if enclosure_mode and enclosure_mode != "auto":
+                raise ValueError("enclosure must be 'auto' when specified")
+            if enclosure_mode and not marker:
+                raise ValueError("enclosure requires marker=")
+            explicit_enclosure = bool(enclosure_mode)
+            require_enclosure_context = explicit_enclosure or (
+                context_lines > 0 and enclosure_context is not None
+            )
+
             # Apply root prefix: per-call root= overrides context code_root
             code_root = root or str(self.env.globals.get("code_root", ""))
             if code_root and not Path(file_path).is_absolute():
@@ -214,9 +252,32 @@ class TemplateRenderer:
             if function:
                 # Check if we also have a marker - extract marker within function
                 if marker:
-                    if hasattr(extractor, "extract_function_marker"):
-                        code_text, start_line, end_line = extractor.extract_function_marker(
-                            resolved_path, function, marker
+                    if (context_lines or explicit_enclosure) and hasattr(extractor, "extract_function_marker_enclosed"):
+                        enclosed = self._call_function_marker_method(
+                            extractor.extract_function_marker_enclosed,
+                            resolved_path,
+                            function,
+                            marker,
+                            signature,
+                        )
+                        code_text, start_line, end_line = enclosed.to_tuple()
+                        if context_lines:
+                            display_segments = self._build_enclosure_segments(
+                                resolved_path, enclosed, context_lines
+                            )
+                        logger.info(
+                            f"Extracted marker '{marker}' with function enclosure "
+                            f"'{function}' in {file_path}"
+                        )
+                    elif require_enclosure_context:
+                        return "❌ **ERROR**: Function marker enclosure not supported for this file type"
+                    elif hasattr(extractor, "extract_function_marker"):
+                        code_text, start_line, end_line = self._call_function_marker_method(
+                            extractor.extract_function_marker,
+                            resolved_path,
+                            function,
+                            marker,
+                            signature,
                         )
                         logger.info(f"Extracted marker '{marker}' from function '{function}' in {file_path}")
                     else:
@@ -234,10 +295,30 @@ class TemplateRenderer:
 
                 # Check if we also have a marker - extract marker within macro
                 if marker:
-                    code_text, start_line, end_line = extractor.extract_function_macro_marker(
-                        resolved_path, macro_spec, marker
-                    )
-                    logger.info(f"Extracted marker '{marker}' from function_macro '{macro_spec}' in {file_path}")
+                    if (context_lines or explicit_enclosure) and hasattr(
+                        extractor, "extract_function_macro_marker_enclosed"
+                    ):
+                        enclosed = extractor.extract_function_macro_marker_enclosed(
+                            resolved_path, macro_spec, marker
+                        )
+                        code_text, start_line, end_line = enclosed.to_tuple()
+                        if context_lines:
+                            display_segments = self._build_enclosure_segments(
+                                resolved_path, enclosed, context_lines
+                            )
+                        logger.info(
+                            f"Extracted marker '{marker}' with function_macro enclosure "
+                            f"'{macro_spec}' in {file_path}"
+                        )
+                    elif require_enclosure_context:
+                        return "❌ **ERROR**: Function macro marker enclosure not supported for this file type"
+                    elif hasattr(extractor, "extract_function_macro_marker"):
+                        code_text, start_line, end_line = extractor.extract_function_macro_marker(
+                            resolved_path, macro_spec, marker
+                        )
+                        logger.info(f"Extracted marker '{marker}' from function_macro '{macro_spec}' in {file_path}")
+                    else:
+                        return "❌ **ERROR**: Function macro marker extraction not supported for this file type"
                 else:
                     code_text, start_line, end_line = extractor.extract_function_macro(resolved_path, macro_spec)
                     logger.info(f"Extracted function_macro '{macro_spec}' from {file_path}")
@@ -252,7 +333,24 @@ class TemplateRenderer:
                 elif hasattr(extractor, "extract_struct"):
                     # C/C++ uses extract_struct for var= (finds declarations)
                     if marker:
-                        if hasattr(extractor, "extract_struct_marker"):
+                        if (context_lines or explicit_enclosure) and hasattr(
+                            extractor, "extract_struct_marker_enclosed"
+                        ):
+                            enclosed = extractor.extract_struct_marker_enclosed(
+                                resolved_path, var, marker
+                            )
+                            code_text, start_line, end_line = enclosed.to_tuple()
+                            if context_lines:
+                                display_segments = self._build_enclosure_segments(
+                                    resolved_path, enclosed, context_lines
+                                )
+                            logger.info(
+                                f"Extracted marker '{marker}' with variable enclosure "
+                                f"'{var}' in {file_path}"
+                            )
+                        elif require_enclosure_context:
+                            return "❌ **ERROR**: Marker enclosure in variable not supported"
+                        elif hasattr(extractor, "extract_struct_marker"):
                             code_text, start_line, end_line = extractor.extract_struct_marker(
                                 resolved_path, var, marker
                             )
@@ -268,7 +366,24 @@ class TemplateRenderer:
                 # Extract struct/class/enum definition
                 if hasattr(extractor, "extract_struct"):
                     if marker:
-                        if hasattr(extractor, "extract_struct_marker"):
+                        if (context_lines or explicit_enclosure) and hasattr(
+                            extractor, "extract_struct_marker_enclosed"
+                        ):
+                            enclosed = extractor.extract_struct_marker_enclosed(
+                                resolved_path, struct, marker
+                            )
+                            code_text, start_line, end_line = enclosed.to_tuple()
+                            if context_lines:
+                                display_segments = self._build_enclosure_segments(
+                                    resolved_path, enclosed, context_lines
+                                )
+                            logger.info(
+                                f"Extracted marker '{marker}' with struct enclosure "
+                                f"'{struct}' in {file_path}"
+                            )
+                        elif require_enclosure_context:
+                            return "❌ **ERROR**: Marker enclosure in struct not supported"
+                        elif hasattr(extractor, "extract_struct_marker"):
                             code_text, start_line, end_line = extractor.extract_struct_marker(
                                 resolved_path, struct, marker
                             )
@@ -284,10 +399,28 @@ class TemplateRenderer:
                 # Extract protobuf message
                 if hasattr(extractor, "extract_message"):
                     if marker:
-                        code_text, start_line, end_line = extractor.extract_message_marker(
-                            resolved_path, message, marker
-                        )
-                        logger.info(f"Extracted marker '{marker}' from message '{message}' in {file_path}")
+                        if (context_lines or explicit_enclosure) and hasattr(
+                            extractor, "extract_message_marker_enclosed"
+                        ):
+                            enclosed = extractor.extract_message_marker_enclosed(
+                                resolved_path, message, marker
+                            )
+                            code_text, start_line, end_line = enclosed.to_tuple()
+                            if context_lines:
+                                display_segments = self._build_enclosure_segments(
+                                    resolved_path, enclosed, context_lines
+                                )
+                            logger.info(
+                                f"Extracted marker '{marker}' with message enclosure "
+                                f"'{message}' in {file_path}"
+                            )
+                        elif require_enclosure_context:
+                            return "❌ **ERROR**: Message marker enclosure not supported for this file type"
+                        else:
+                            code_text, start_line, end_line = extractor.extract_message_marker(
+                                resolved_path, message, marker
+                            )
+                            logger.info(f"Extracted marker '{marker}' from message '{message}' in {file_path}")
                     else:
                         code_text, start_line, end_line = extractor.extract_message(resolved_path, message)
                         logger.info(f"Extracted message '{message}' from {file_path}")
@@ -308,8 +441,19 @@ class TemplateRenderer:
                 else:
                     return "❌ **ERROR**: Service extraction not supported for this file type"
             elif marker:
-                code_text, start_line, end_line = extractor.extract_marker(resolved_path, marker)
-                logger.info(f"Extracted marker '{marker}' from {file_path}")
+                if (context_lines or explicit_enclosure) and hasattr(extractor, "extract_marker_enclosed"):
+                    enclosed = extractor.extract_marker_enclosed(resolved_path, marker)
+                    code_text, start_line, end_line = enclosed.to_tuple()
+                    if context_lines:
+                        display_segments = self._build_enclosure_segments(
+                            resolved_path, enclosed, context_lines
+                        )
+                    logger.info(f"Extracted marker '{marker}' with auto enclosure in {file_path}")
+                elif require_enclosure_context:
+                    return "❌ **ERROR**: Auto marker enclosure not supported for this file type"
+                else:
+                    code_text, start_line, end_line = extractor.extract_marker(resolved_path, marker)
+                    logger.info(f"Extracted marker '{marker}' from {file_path}")
             elif lines:
                 start_line, end_line = lines
                 code_text, start_line, end_line = extractor.extract_lines(resolved_path, start_line, end_line)
@@ -329,9 +473,15 @@ class TemplateRenderer:
                 # 'git diff base..HEAD'), but start_line/end_line came from
                 # the working tree. Translate before subtracting so uncommitted
                 # edits above the extracted region don't shift the wrong rows.
-                committed_start = self.github.map_to_committed_line(display_path, start_line)
-                committed_end = self.github.map_to_committed_line(display_path, end_line)
-                self.changes_set.subtract(display_path, committed_start, committed_end)
+                coverage_ranges = (
+                    [(segment_start, segment_end) for _, segment_start, segment_end in display_segments]
+                    if display_segments
+                    else [(start_line, end_line)]
+                )
+                for coverage_start, coverage_end in coverage_ranges:
+                    committed_start = self.github.map_to_committed_line(display_path, coverage_start)
+                    committed_end = self.github.map_to_committed_line(display_path, coverage_end)
+                    self.changes_set.subtract(display_path, committed_start, committed_end)
 
             # Remap line numbers if requested (for sharing docs from dirty files)
             display_start = start_line
@@ -364,7 +514,15 @@ class TemplateRenderer:
             # Format code with line numbers and/or blame
             # Use remapped line numbers for display if remap_dirty_lines is enabled
             code_start_line = display_start if self.remap_dirty_lines else start_line
-            if blame and not active_ref:
+            if display_segments:
+                code_text = self._format_code_segments(
+                    display_segments,
+                    display_path,
+                    line_numbers=line_numbers,
+                    blame=blame and not active_ref,
+                    remap_dirty_lines=self.remap_dirty_lines and not active_ref,
+                )
+            elif blame and not active_ref:
                 code_text = self.github.format_with_blame(code_text, code_start_line, display_path)
             elif line_numbers:
                 code_text = self._add_line_numbers(code_text, code_start_line)
@@ -523,7 +681,8 @@ class TemplateRenderer:
 
         return ""
 
-    def _include_function(self, path: str) -> str:
+    @pass_context
+    def _include_function(self, context, path: str) -> str:
         """
         Include a file into the template output.
 
@@ -541,12 +700,50 @@ class TemplateRenderer:
             {{ include('details.md.j2') }}
             {{ include('sections/intro.md') }}
         """
+        return self._load_include(path, context)
+
+    @pass_context
+    def _include_body_function(self, context, path: str) -> str:
+        """
+        Include a file as embeddable body content.
+
+        Uses the same rendering rules as include(), then strips leading YAML
+        frontmatter and projected-source's generated metadata header.
+
+        Examples:
+            {{ include_body('walkthrough.md.j2') }}
+            {{ include_body('rendered-doc.md') }}
+        """
+        return self._strip_embedded_doc_wrappers(self._load_include(path, context))
+
+    def _load_include(self, path: str, context=None) -> str:
+        """Load include content, rendering .j2 files through this renderer."""
         if path.endswith(".j2"):
             template = self.env.get_template(path)
-            return template.render()
-        else:
-            full_path = self.template_dir / path
-            return full_path.read_text()
+            return template.render(context.get_all() if context is not None else {})
+
+        full_path = self.template_dir / path
+        return full_path.read_text()
+
+    def _strip_embedded_doc_wrappers(self, text: str) -> str:
+        """Strip leading wrappers that are valid for standalone docs, not embeds."""
+        stripped_frontmatter = False
+        stripped_header = False
+
+        while True:
+            frontmatter = None if stripped_frontmatter else FRONTMATTER_RE.match(text)
+            if frontmatter:
+                text = text[frontmatter.end() :].lstrip("\r\n")
+                stripped_frontmatter = True
+                continue
+
+            header = None if stripped_header else PROJECTED_SOURCE_HEADER_RE.match(text)
+            if header:
+                text = text[header.end() :].lstrip("\r\n")
+                stripped_header = True
+                continue
+
+            return text
 
     def _set_code_context_function(self, root: str = None, ref: str = None) -> str:
         """
@@ -647,6 +844,125 @@ class TemplateRenderer:
         except Exception as e:
             logger.error(f"Error loading custom tags from {custom_file}: {e}")
             # Don't crash - just continue without custom tags
+
+    def _normalize_enclosure_context(self, value) -> int:
+        """Validate and normalize enclosure_context."""
+        if value is None:
+            return 0
+        try:
+            context_lines = int(value)
+        except (TypeError, ValueError) as e:
+            raise ValueError("enclosure_context must be an integer") from e
+        if context_lines < 0:
+            raise ValueError("enclosure_context must be >= 0")
+        return context_lines
+
+    def _call_function_marker_method(self, method, file_path: Path, function: str, marker: str, signature: str = None):
+        """Call a function-marker extractor, passing signature only when supported."""
+        if "signature" in inspect_signature(method).parameters:
+            return method(file_path, function, marker, signature)
+        if signature is not None:
+            raise ValueError("signature= is not supported for marker extraction in this file type")
+        return method(file_path, function, marker)
+
+    def _build_enclosure_segments(self, file_path: Path, enclosed, context_lines: int) -> List[Tuple[str, int, int]]:
+        """Build displayed source segments for an enclosed marker extraction."""
+        ranges = self._build_enclosure_ranges(
+            enclosed.enclosure_start_line,
+            enclosed.enclosure_end_line,
+            enclosed.marker_start_line,
+            enclosed.marker_end_line,
+            context_lines,
+        )
+        lines = file_path.read_text().splitlines()
+        segments: List[Tuple[str, int, int]] = []
+        for start, end in ranges:
+            if start > end:
+                continue
+            segment_lines: List[str] = []
+            segment_start: Optional[int] = None
+            for line_num in range(start, end + 1):
+                line = lines[line_num - 1]
+                if MARKER_DIRECTIVE_RE.match(line):
+                    if segment_lines and segment_start is not None:
+                        segments.append(("\n".join(segment_lines), segment_start, line_num - 1))
+                    segment_lines = []
+                    segment_start = None
+                    continue
+                if segment_start is None:
+                    segment_start = line_num
+                segment_lines.append(line)
+            if segment_lines and segment_start is not None:
+                segments.append(("\n".join(segment_lines), segment_start, end))
+        return segments
+
+    def _build_enclosure_ranges(
+        self,
+        enclosure_start: int,
+        enclosure_end: int,
+        marker_start: int,
+        marker_end: int,
+        context_lines: int,
+    ) -> List[Tuple[int, int]]:
+        """Return merged line ranges for enclosure head, marker, and enclosure tail."""
+        ranges: List[Tuple[int, int]] = []
+
+        head_end = min(enclosure_start + context_lines - 1, marker_start - 2, enclosure_end)
+        if enclosure_start <= head_end:
+            ranges.append((enclosure_start, head_end))
+
+        if marker_start <= marker_end:
+            ranges.append((marker_start, marker_end))
+
+        tail_start = max(enclosure_end - context_lines + 1, marker_end + 2, enclosure_start)
+        if tail_start <= enclosure_end:
+            ranges.append((tail_start, enclosure_end))
+
+        return self._merge_line_ranges(ranges)
+
+    def _merge_line_ranges(self, ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+        """Merge overlapping or adjacent line ranges."""
+        merged: List[Tuple[int, int]] = []
+        for start, end in sorted(ranges):
+            if not merged or start > merged[-1][1] + 1:
+                merged.append((start, end))
+            else:
+                prev_start, prev_end = merged[-1]
+                merged[-1] = (prev_start, max(prev_end, end))
+        return merged
+
+    def _format_code_segments(
+        self,
+        segments: List[Tuple[str, int, int]],
+        display_path: Path,
+        line_numbers: bool,
+        blame: bool,
+        remap_dirty_lines: bool,
+    ) -> str:
+        """Format non-contiguous code segments for a single markdown code block."""
+        formatted: List[str] = []
+        previous_end: Optional[int] = None
+
+        for text, start_line, end_line in segments:
+            if previous_end is not None and start_line > previous_end + 1:
+                formatted.append("...")
+
+            display_start = (
+                self.github.map_to_committed_line(display_path, start_line)
+                if remap_dirty_lines
+                else start_line
+            )
+
+            if blame:
+                formatted.append(self.github.format_with_blame(text, display_start, display_path))
+            elif line_numbers:
+                formatted.append(self._add_line_numbers(text, display_start))
+            else:
+                formatted.append(text)
+
+            previous_end = end_line
+
+        return "\n".join(part for part in formatted if part)
 
     def _add_line_numbers(self, code_text: str, start_line: int) -> str:
         """Add line numbers to code text."""

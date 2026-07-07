@@ -90,11 +90,16 @@ repo diff clean — the analysis travels in the description, not the tree.
 
 ```bash
 # .ai-docs/ is gitignored; the template + rendered output never get committed
-projected-source render --no-header .ai-docs/pr-description.md.j2 .ai-docs/pr-description.md
+projected-source render --no-header --enclosure-context 2 .ai-docs/pr-description.md.j2 .ai-docs/pr-description.md
 gh pr edit 123 --body-file .ai-docs/pr-description.md
 ```
 
 - Use `--no-header` so no render metadata leaks into the description.
+- C/C++ extractor-backed marker extracts include first/last enclosing-symbol context by default.
+  Use `--enclosure-context N` to change the global default, `--enclosure-context 0`
+  to disable it globally, or per-call `enclosure_context=0` to opt out locally.
+  Other languages currently keep exact marker output unless they add enclosed
+  marker support.
 - `code()` extracts become live GitHub permalinks. Pin them with `ref=` (or a
   block-level `set_code_context(ref=...)`) to a commit that actually contains the
   code you're quoting — handy when the PR branch has since changed those lines.
@@ -112,6 +117,9 @@ gh pr edit 123 --body-file .ai-docs/pr-description.md
 {{{{ code('src/file.cpp', var='errorCodes') }}}}
 {{{{ code('src/file.cpp', marker='example-usage') }}}}
 {{{{ code('src/file.cpp', function='main', marker='init-section') }}}}
+{{{{ code('src/file.cpp', function='share', signature='TxSetShare', marker='encode') }}}}
+{{{{ code('src/file.cpp', function='main', marker='init-section', enclosure_context=2) }}}}
+{{{{ code('src/file.cpp', marker='init-section', enclosure_context=0) }}}}
 
 {{# C/C++ macros #}}
 {{{{ code('src/file.cpp', function_macro={{'name': 'DEFINE_HANDLER', 'arg0': 'onConnect'}}) }}}}
@@ -181,15 +189,19 @@ Distinct from markdown `<!-- ... -->` comments, which persist in the output.
 Use Jinja2 comments for "why I extracted this" notes; use markdown comments
 when you want the comment to survive into the rendered file.
 
-### include() - Include peer files
+### include() / include_body() - Include peer files
 
 ```jinja
 {{{{ include('background.md') }}}}       {{# raw markdown, no template processing #}}
 {{{{ include('details.md.j2') }}}}       {{# rendered as Jinja2 template #}}
+{{{{ include_body('walkthrough.md.j2') }}}} {{# render, then strip doc wrappers #}}
 ```
 
 Paths are relative to the template directory. `.j2` files are rendered as
-templates with full access to `code()` and other functions.
+templates with full access to `code()`, caller variables, and other functions.
+`include()` preserves frontmatter and projected-source metadata headers verbatim;
+use `include_body()` when embedding a standalone rendered/walkthrough document
+inside another doc.
 
 ### code_context - Set root path and git ref for a block
 
@@ -311,5 +323,9 @@ Example:
    with a `---` frontmatter block, the metadata header is inserted *after* the
    closing `---` so frontmatter stays on line 1. Use `--no-header` to omit the
    metadata header entirely.
+9. **Includes are not automatically body-only** - `include()` keeps included
+   frontmatter and projected-source metadata headers. Use `include_body()` for
+   PR descriptions or nested walkthroughs where only the document body should
+   appear.
 """
     click.echo(guide)

@@ -7,7 +7,7 @@
 
 # projected-source: System Overview
 
-**projected-source** is a documentation tool that extracts code from source files and injects it into Jinja2 templates, creating documentation that stays synchronized with the codebase. It uses tree-sitter for accurate AST-based parsing and supports C/C++, Protocol Buffers, and Python.
+**projected-source** is a documentation tool that extracts code from source files and injects it into Jinja2 templates, creating documentation that stays synchronized with the codebase. It uses tree-sitter for accurate AST-based parsing and supports multiple languages through extractor plugins, including C/C++, Protocol Buffers, Python, JavaScript/TypeScript, Java, Rust, and Lean.
 
 The core idea: write narrative documentation in Markdown templates (`.md.j2`), use `{{ "{{ code() }}" }}` calls to pull in the exact code you're describing, and the rendered output always reflects the current state of the source.
 

@@ -93,6 +93,12 @@ class TestNameExtraction:
         assert name == "method"
         assert quals == ["MyClass"]
 
+    def test_function_name_and_qualifiers_destructor(self):
+        fn = _first(_parse("struct Widget { ~Widget() {} };"), "function_definition")
+        name, quals = extract_function_name_and_qualifiers(fn.child_by_field_name("declarator"), ["Widget"])
+        assert name == "~Widget"
+        assert quals == ["Widget"]
+
 
 class TestFindFollowingBody:
     def test_returns_none_for_plain_declaration(self):

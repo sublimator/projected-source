@@ -175,6 +175,14 @@ def _apply_header(header: str, rendered: str) -> str:
     default=True,
     help="Prepend a metadata comment and 'Last updated' line to rendered output (default: on)",
 )
+@click.option(
+    "--enclosure-context",
+    type=click.IntRange(min=0),
+    default=3,
+    show_default=True,
+    metavar="N",
+    help="Default C/C++ enclosure_context for code() marker extracts; 0 disables.",
+)
 def render(
     input_path,
     output_path,
@@ -185,6 +193,7 @@ def render(
     strict,
     commit,
     header,
+    enclosure_context,
 ):
     """
     Render Jinja2 templates to markdown.
@@ -291,12 +300,35 @@ def render(
 
         # Process based on input type
         if input_is_stdin:
-            _render_stdin(output_path, effective_repo_path, output_to_stdout, remap_dirty_lines, changes_set, header)
+            _render_stdin(
+                output_path,
+                effective_repo_path,
+                output_to_stdout,
+                remap_dirty_lines,
+                changes_set,
+                header,
+                enclosure_context,
+            )
         elif input_is_dir:
-            _render_directory(input_path, output_path, effective_repo_path, remap_dirty_lines, changes_set, header)
+            _render_directory(
+                input_path,
+                output_path,
+                effective_repo_path,
+                remap_dirty_lines,
+                changes_set,
+                header,
+                enclosure_context,
+            )
         else:
             _render_file(
-                input_path, output_path, effective_repo_path, output_to_stdout, remap_dirty_lines, changes_set, header
+                input_path,
+                output_path,
+                effective_repo_path,
+                output_to_stdout,
+                remap_dirty_lines,
+                changes_set,
+                header,
+                enclosure_context,
             )
 
         return changes_set
@@ -358,14 +390,26 @@ def render(
             set_fixture_collector(None)
 
 
-def _render_stdin(output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None, header=False):
+def _render_stdin(
+    output_file,
+    repo_path,
+    output_to_stdout,
+    remap_dirty_lines=False,
+    changes_set=None,
+    header=False,
+    enclosure_context=3,
+):
     """Render template from stdin."""
     # Read template from stdin
     template_content = sys.stdin.read()
 
     # Use current directory as template directory for relative paths
     renderer = TemplateRenderer(
-        template_dir=Path.cwd(), repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
+        template_dir=Path.cwd(),
+        repo_path=repo_path,
+        remap_dirty_lines=remap_dirty_lines,
+        changes_set=changes_set,
+        default_enclosure_context=enclosure_context,
     )
 
     try:
@@ -390,7 +434,14 @@ def _render_stdin(output_file, repo_path, output_to_stdout, remap_dirty_lines=Fa
 
 
 def _render_file(
-    input_file, output_file, repo_path, output_to_stdout, remap_dirty_lines=False, changes_set=None, header=False
+    input_file,
+    output_file,
+    repo_path,
+    output_to_stdout,
+    remap_dirty_lines=False,
+    changes_set=None,
+    header=False,
+    enclosure_context=3,
 ):
     """Render a single template file."""
     # Determine template directory
@@ -399,7 +450,11 @@ def _render_file(
 
     # Create renderer
     renderer = TemplateRenderer(
-        template_dir=template_dir, repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
+        template_dir=template_dir,
+        repo_path=repo_path,
+        remap_dirty_lines=remap_dirty_lines,
+        changes_set=changes_set,
+        default_enclosure_context=enclosure_context,
     )
 
     try:
@@ -422,7 +477,15 @@ def _render_file(
         sys.exit(1)
 
 
-def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False, changes_set=None, header=False):
+def _render_directory(
+    input_dir,
+    output_dir,
+    repo_path,
+    remap_dirty_lines=False,
+    changes_set=None,
+    header=False,
+    enclosure_context=3,
+):
     """Render all templates in a directory."""
     templates = list(input_dir.glob("**/*.j2"))
 
@@ -434,7 +497,11 @@ def _render_directory(input_dir, output_dir, repo_path, remap_dirty_lines=False,
 
     # Create renderer
     renderer = TemplateRenderer(
-        template_dir=input_dir, repo_path=repo_path, remap_dirty_lines=remap_dirty_lines, changes_set=changes_set
+        template_dir=input_dir,
+        repo_path=repo_path,
+        remap_dirty_lines=remap_dirty_lines,
+        changes_set=changes_set,
+        default_enclosure_context=enclosure_context,
     )
 
     # Track results

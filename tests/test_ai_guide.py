@@ -47,3 +47,20 @@ def test_guide_documents_rust():
     output = _guide_output()
     assert ".rs" in output
     assert "code('src/node.rs'" in output
+
+
+def test_guide_documents_enclosure_context_controls():
+    """The marker-context default and opt-outs are important authoring contract."""
+    output = _guide_output()
+    assert "--enclosure-context N" in output
+    assert "--enclosure-context 0" in output
+    assert "enclosure_context=0" in output
+    assert "C/C++ extractor-backed marker extracts" in output
+
+
+def test_guide_documents_include_body():
+    """Embedding standalone walkthroughs should use include_body(), not include()."""
+    output = _guide_output()
+    assert "include_body('walkthrough.md.j2')" in output
+    assert "frontmatter and projected-source metadata headers" in output
+    assert "caller variables" in output

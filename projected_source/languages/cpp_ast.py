@@ -137,6 +137,8 @@ def extract_qualified_parts(qnode: Node) -> List[str]:
                     parts.append(template_name)
             elif child.type == "operator_name":
                 parts.append(extract_operator_name(child))
+            elif child.type == "destructor_name":
+                parts.append(node_text(child))
             elif child.type == "qualified_identifier":
                 current = child
                 found_nested = True
@@ -203,6 +205,9 @@ def extract_function_name_and_qualifiers(declarator: Node, context_stack: List[s
                     found_qualifiers = context_stack
                 elif name_node.type == "operator_name":
                     found_name = extract_operator_name(name_node)
+                    found_qualifiers = context_stack
+                elif name_node.type == "destructor_name":
+                    found_name = node_text(name_node)
                     found_qualifiers = context_stack
             break
         elif current.type == "pointer_declarator":

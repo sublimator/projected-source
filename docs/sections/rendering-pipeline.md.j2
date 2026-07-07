@@ -1,6 +1,6 @@
 ## The Rendering Pipeline
 
-The `TemplateRenderer` is the heart of the system. It creates a Jinja2 environment and registers three template functions — `code()`, `include()`, and `ignore_changes()` — that templates use to pull in live code.
+The `TemplateRenderer` is the heart of the system. It creates a Jinja2 environment and registers template functions — `code()`, `include()`, `include_body()`, and `ignore_changes()` — that templates use to pull in live code.
 
 ### Initialization
 
@@ -18,11 +18,43 @@ The function handles a wide variety of extraction types — functions, structs, 
 
 When a `ChangesSet` is provided (validation mode), each extraction automatically calls `subtract()` to mark those lines as documented.
 
+### Marker Enclosure Context
+
+C/C++ extractor-backed marker extracts include a little orientation by default: `enclosure_context=N` renders the marker body plus the first and last `N` lines of the enclosing source construct, and the built-in default is `3`. This works for explicit scopes such as `function=` or `struct=`, and marker-only C/C++ calls imply `enclosure='auto'`:
+
+```jinja
+{{ "{{ code('src/file.cpp', function='share', signature='TxSetShare', marker='encode') }}" }}
+{{ "{{ code('src/file.cpp', marker='encode') }}" }}
+{{ "{{ code('src/file.cpp', marker='encode', enclosure_context=0) }}" }}
+```
+
+The permalink still targets the marker body, not the wider enclosure. In validation mode, only the displayed segments are counted as covered, so hidden middle lines do not accidentally satisfy change coverage.
+
+#### Rationale and Scope
+
+Markers are usually intentionally narrow: they identify the branch, guard, field, or handoff that the prose is about. A reviewer still needs orientation, so C/C++ marker snippets default to showing the enclosing symbol's opening and closing context. Exact marker output remains available with `enclosure_context=0` for intentionally surgical snippets.
+
+This is limited to C/C++ extractor-backed files for now because the feature depends on language-specific AST enclosure selection. For languages without enclosed marker support, the implicit default falls back to exact marker extraction. Explicit requests such as `enclosure_context=2` or `enclosure='auto'` still report unsupported behavior instead of pretending context was added.
+
+The renderer builds those non-contiguous display ranges here:
+
+{{ code('projected_source/core/renderer.py', function='TemplateRenderer._build_enclosure_segments') }}
+
+C++ provides the first auto-enclosure implementation. It prefers a marker-wrapped declaration/function/class when the marker surrounds one exactly, otherwise it picks the closest useful containing construct:
+
+{{ code('projected_source/languages/cpp.py', function='CppExtractor.extract_marker_enclosed') }}
+
 ### The include() Function
 
-Templates can compose by including other files. Plain markdown files are included verbatim; `.j2` files are rendered as templates with full access to `code()` and other functions:
+Templates can compose by including other files. Plain markdown files are included verbatim; `.j2` files are rendered as templates with full access to `code()`, caller variables, and other functions:
 
 {{ code('projected_source/core/renderer.py', function='TemplateRenderer._include_function') }}
+
+`include()` deliberately preserves standalone document wrappers. If an included file starts with YAML frontmatter or an already-rendered projected-source metadata header, that content stays in the output. Top-level CLI header handling runs only after the whole template, including nested includes, has rendered.
+
+When embedding a standalone walkthrough inside another document, use `include_body()`. It uses the same raw/rendered include rules, then strips leading YAML frontmatter and projected-source's generated metadata header:
+
+{{ code('projected_source/core/renderer.py', function='TemplateRenderer._include_body_function') }}
 
 ### Custom Tags
 
