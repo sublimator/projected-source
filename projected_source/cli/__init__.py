@@ -9,6 +9,7 @@ import click
 from .. import setup_logging
 from .ai_guide import ai_guide
 from .bug_report import bug_report
+from .check import check
 from .find_markers import find_markers
 from .list_symbols import list_functions
 from .render import render
@@ -31,6 +32,7 @@ def cli(verbose, debug):
 
 # Register commands
 cli.add_command(render)
+cli.add_command(check)
 cli.add_command(ai_guide)
 cli.add_command(bug_report)
 cli.add_command(find_markers)
