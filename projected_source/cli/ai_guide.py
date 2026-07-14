@@ -73,6 +73,9 @@ projected-source render template.md.j2 output.md
 # Render Markdown into a self-contained readable HTML document
 projected-source render template.md.j2 --html
 
+# Re-render when templates, includes, or repository sources change
+projected-source render template.md.j2 --html --watch
+
 # Render directory of templates
 projected-source render docs/
 
@@ -88,6 +91,10 @@ projected-source render docs/ -V auto --strict     # exit 1 if uncovered
 source projection still produce Markdown first; `--no-html` remains the
 default. The generated HTML has embedded responsive styling and preserves raw
 HTML such as `<details>` without requiring external assets.
+
+`--watch` renders once, then regenerates after relevant filesystem changes.
+Generated outputs are ignored to avoid loops. Watch mode requires file or
+directory input/output and cannot be combined with `--commit`.
 
 ## Recipe: throwaway docs (PR descriptions, reviews)
 

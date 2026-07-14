@@ -14,11 +14,51 @@ from pathlib import Path
 from typing import Optional
 
 import click
+from watchfiles import DefaultFilter, watch
 
 from ..core.changes_set import ChangesSet
 from ..core.html import default_html_output, markdown_to_html
 from ..core.renderer import TemplateRenderer
 from .helpers import FixtureCollector, console, get_fixture_collector, set_fixture_collector
+
+
+class _RenderWatchFilter(DefaultFilter):
+    """Default filesystem filtering plus generated-output suppression."""
+
+    def __init__(self):
+        super().__init__()
+        self._ignored_paths: set[Path] = set()
+
+    def set_ignored_paths(self, paths) -> None:
+        self._ignored_paths = {Path(path).resolve() for path in paths}
+
+    def __call__(self, change, path: str) -> bool:
+        return Path(path).resolve() not in self._ignored_paths and super().__call__(change, path)
+
+
+def _watch_roots(repo_path: Path, input_path: Path, input_is_dir: bool) -> list[Path]:
+    """Return the smallest set of roots covering source and template changes."""
+    candidates = [repo_path.resolve(), (input_path if input_is_dir else input_path.parent).resolve()]
+    roots: list[Path] = []
+    for candidate in candidates:
+        if any(candidate == root or candidate.is_relative_to(root) for root in roots):
+            continue
+        roots = [root for root in roots if not root.is_relative_to(candidate)]
+        roots.append(candidate)
+    return roots
+
+
+def _generated_output_paths(input_path: Path, output_path: Path, input_is_dir: bool, html_output: bool) -> set[Path]:
+    """Find generated files so their writes do not trigger another render."""
+    if not input_is_dir:
+        return {output_path.resolve()}
+
+    outputs = set()
+    for template_path in input_path.glob("**/*.j2"):
+        rel_path = template_path.relative_to(input_path)
+        output_rel_path = default_html_output(rel_path) if html_output else rel_path.with_suffix("")
+        outputs.add((output_path / output_rel_path).resolve())
+    return outputs
 
 
 @contextmanager
@@ -183,6 +223,12 @@ def _apply_header(header: str, rendered: str) -> str:
     help="Wrap rendered Markdown in a self-contained styled HTML document (default: off)",
 )
 @click.option(
+    "--watch",
+    "watch_mode",
+    is_flag=True,
+    help="Keep rendering when templates, includes, or repository sources change",
+)
+@click.option(
     "--enclosure-context",
     type=click.IntRange(min=0),
     default=3,
@@ -201,6 +247,7 @@ def render(
     commit,
     header,
     html_output,
+    watch_mode,
     enclosure_context,
 ):
     """
@@ -219,6 +266,7 @@ def render(
         projected-source render template.md.j2 -         # Output to stdout
         projected-source render template.md.j2 out.md    # Output to out.md
         projected-source render template.md.j2 --html    # Output to template.html
+        projected-source render template.md.j2 --watch   # Re-render when dependencies change
         projected-source render templates/               # Process directory in-place
         projected-source render templates/ docs/         # Output to docs/
         echo "{{ code('file.cpp', function='main') }}" | projected-source render - -
@@ -243,6 +291,11 @@ def render(
     else:
         input_is_stdin = False
         input_is_dir = input_path.is_dir()
+
+    if watch_mode and input_is_stdin:
+        raise click.UsageError("--watch requires a file or directory input")
+    if watch_mode and commit:
+        raise click.UsageError("--watch cannot be combined with --commit")
 
     # Determine output path
     if output_path is None:
@@ -287,6 +340,9 @@ def render(
     if not output_to_stdout and not input_is_stdin and input_is_dir != output_is_dir:
         console.print("[red]✗ Input and output types must match (both files or both directories)[/red]")
         sys.exit(1)
+
+    if watch_mode and output_to_stdout:
+        raise click.UsageError("--watch requires file or directory output")
 
     # Helper to do the actual rendering
     def do_render(effective_repo_path: Path):
@@ -345,9 +401,9 @@ def render(
 
         return changes_set
 
-    # Render - either against working directory or a specific commit
-    changes_set = None
-    try:
+    def render_cycle():
+        """Render once, including optional change-coverage reporting."""
+        changes_set = None
         if commit:
             with git_worktree_at_commit(repo_path, commit) as worktree_path:
                 changes_set = do_render(worktree_path)
@@ -386,6 +442,33 @@ def render(
                     sys.exit(1)
             else:
                 console.print("[green]✓ All changes documented[/green]")
+
+    # Render once, or remain attached and repeat after filesystem changes.
+    try:
+        if not watch_mode:
+            render_cycle()
+        else:
+            watch_filter = _RenderWatchFilter()
+
+            def watched_render():
+                try:
+                    render_cycle()
+                except SystemExit:
+                    # A broken template should not kill a long-running watcher.
+                    pass
+                finally:
+                    watch_filter.set_ignored_paths(
+                        _generated_output_paths(input_path, output_path, input_is_dir, html_output)
+                    )
+
+            watched_render()
+            roots = _watch_roots(repo_path, input_path, input_is_dir)
+            console.print(f"[cyan]Watching {', '.join(str(root) for root in roots)} (Ctrl-C to stop)[/cyan]")
+            for changes in watch(*roots, watch_filter=watch_filter, debounce=200, step=50):
+                console.print(f"\n[cyan]↻ {len(changes)} change(s); rendering[/cyan]")
+                watched_render()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Watch stopped[/dim]")
     finally:
         # Finalize fixture collection — always run so manifest is written
         # even when do_render() / sys.exit() bypass normal flow.

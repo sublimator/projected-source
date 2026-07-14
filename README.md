@@ -40,6 +40,9 @@ projected-source render template.md.j2 -
 # Render a self-contained, styled HTML document (foo.md.j2 -> foo.html)
 projected-source render template.md.j2 --html
 
+# Keep the output current while editing templates or referenced source
+projected-source render template.md.j2 --html --watch
+
 # Render a directory of templates
 projected-source render docs/
 
@@ -51,6 +54,10 @@ projected-source render docs/ --enclosure-context 2
 still produce Markdown first, then projected-source wraps it in responsive,
 self-contained HTML. Raw HTML such as `<details>` is preserved. The default
 remains Markdown (`--no-html`).
+
+`--watch` renders once, then regenerates when templates, includes, or repository
+sources change. Generated outputs are ignored to avoid feedback loops. Watch
+mode requires file or directory input/output and cannot be used with `--commit`.
 
 ### In Templates
 

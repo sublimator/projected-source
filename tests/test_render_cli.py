@@ -345,6 +345,76 @@ def test_render_html_directory_maps_markdown_templates_to_html(tmp_path):
     assert not (output / "guide.md").exists()
 
 
+def test_render_watch_renders_initially_and_after_change(tmp_path, monkeypatch):
+    import importlib
+
+    render_mod = importlib.import_module("projected_source.cli.render")
+    template = tmp_path / "watched.md.j2"
+    output = tmp_path / "watched.md"
+    source = tmp_path / "source.txt"
+    source.write_text("first")
+    template.write_text("{{ include('source.txt') }}\n")
+
+    def fake_watch(*roots, **kwargs):
+        assert tmp_path.resolve() in roots
+        source.write_text("second")
+        yield {(1, str(source))}
+
+    monkeypatch.setattr(render_mod, "watch", fake_watch)
+    result = CliRunner().invoke(
+        cli,
+        ["render", str(template), "--watch", "--no-header", "--repo-path", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert output.read_text() == "second"
+    assert "Watching" in result.output
+    assert "1 change(s); rendering" in _strip_ansi(result.output)
+
+
+def test_render_watch_recovers_after_render_error(tmp_path, monkeypatch):
+    import importlib
+
+    render_mod = importlib.import_module("projected_source.cli.render")
+    template = tmp_path / "broken.md.j2"
+    output = tmp_path / "broken.md"
+    template.write_text("{{ missing_function() }}\n")
+
+    def fake_watch(*roots, **kwargs):
+        template.write_text("recovered\n")
+        yield {(1, str(template))}
+
+    monkeypatch.setattr(render_mod, "watch", fake_watch)
+    result = CliRunner().invoke(
+        cli,
+        ["render", str(template), "--watch", "--no-header", "--repo-path", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Failed to render" in result.output
+    assert output.read_text() == "recovered"
+
+
+@pytest.mark.parametrize(
+    "args,input_text,error",
+    [
+        (["-", "-", "--watch"], "hello\n", "requires a file or directory input"),
+        (["template.md.j2", "-", "--watch"], None, "requires file or directory output"),
+        (["template.md.j2", "--watch", "--commit", "HEAD"], None, "cannot be combined with --commit"),
+    ],
+)
+def test_render_watch_rejects_incompatible_modes(tmp_path, args, input_text, error):
+    (tmp_path / "template.md.j2").write_text("hello\n")
+    result = CliRunner().invoke(
+        cli,
+        ["render", *args, "--repo-path", str(tmp_path)],
+        input=input_text,
+    )
+
+    assert result.exit_code != 0
+    assert error in result.output
+
+
 def test_render_enclosure_context_default(tmp_path):
     """Marker-only code() calls get enclosure context by default."""
     source = tmp_path / "example.cpp"
