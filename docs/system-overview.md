@@ -1,14 +1,14 @@
 <!--
 rendered_from: system-overview.md.j2
-rendered_at: 2026-07-14T10:23:48Z
+rendered_at: 2026-07-14T10:29:09Z
 branch: main
-commit: 5d71911
-commit_message: docs: re-render system overview for check, html, and watch changes
+commit: 6a6e12f
+commit_message: fix(check): ignore permalink commit churn when comparing
 -->
 
 ---
 
-<sub>Last updated: 2026-07-14 | branch: main | commit: 5d71911 (docs: re-render system overview for check, html, and watch changes)</sub>
+<sub>Last updated: 2026-07-14 | branch: main | commit: 6a6e12f (fix(check): ignore permalink commit churn when comparing)</sub>
 
 ---
 
@@ -33,7 +33,7 @@ Before diving into how extraction works, let's look at the types that flow throu
 
 Every time code is extracted from a source file — whether a function, struct, or marker region — the result is packaged as an `ExtractionResult`. This dataclass carries the extracted text along with precise location metadata:
 
-📍 [`projected_source/languages/extraction_result.py:9-36`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/languages/extraction_result.py#L9-L36)
+📍 [`projected_source/languages/extraction_result.py:9-36`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/languages/extraction_result.py#L9-L36)
 ```python
    9 @dataclass
   10 class ExtractionResult:
@@ -71,7 +71,7 @@ The `to_tuple()` method exists for backwards compatibility — most of the extra
 
 Marker extracts can also carry their outer context. `EnclosedMarkerResult` keeps the marker body and marker line range as the primary extraction, while preserving the enclosing function/class/declaration range for rendering surrounding context:
 
-📍 [`projected_source/languages/extraction_result.py:39-69`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/languages/extraction_result.py#L39-L69)
+📍 [`projected_source/languages/extraction_result.py:39-69`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/languages/extraction_result.py#L39-L69)
 ```python
   39 @dataclass
   40 class EnclosedMarkerResult:
@@ -112,7 +112,7 @@ Permalinks and source location metadata use the marker range. Validation coverag
 
 When validating that documentation covers code changes, individual changed regions are represented as `ChangeRegion` — a simple dataclass tying a file path to a line range:
 
-📍 [`projected_source/core/changes_set.py:15-24`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/changes_set.py#L15-L24)
+📍 [`projected_source/core/changes_set.py:15-24`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/changes_set.py#L15-L24)
 ```python
   15 @dataclass
   16 class ChangeRegion:
@@ -132,7 +132,7 @@ When validating that documentation covers code changes, individual changed regio
 
 The system supports multiple languages through a simple registry pattern. Each file extension maps to an extractor class:
 
-📍 [`projected_source/languages/__init__.py:19-44`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/languages/__init__.py#L19-L44)
+📍 [`projected_source/languages/__init__.py:19-44`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/languages/__init__.py#L19-L44)
 ```python
   19 EXTRACTORS = {
   20     ".cpp": CppExtractor,
@@ -164,7 +164,7 @@ The system supports multiple languages through a simple registry pattern. Each f
 
 When a `code()` call needs to extract from a file, it calls `get_extractor()` which looks up the right class by file extension and instantiates it:
 
-📍 [`projected_source/languages/__init__.py:47-69`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/languages/__init__.py#L47-L69)
+📍 [`projected_source/languages/__init__.py:47-69`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/languages/__init__.py#L47-L69)
 ```python
   47 def get_extractor(file_path: Path):
   48     """
@@ -195,7 +195,7 @@ When a `code()` call needs to extract from a file, it calls `get_extractor()` wh
 
 All language extractors inherit from `BaseExtractor`, which provides the tree-sitter parser setup, line extraction, and the marker system. The marker system lets you tag regions of source code with `//@@start name` and `//@@end name` comments, then extract just that region:
 
-📍 [`projected_source/core/extractor.py:17-134`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/extractor.py#L17-L134)
+📍 [`projected_source/core/extractor.py:17-134`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/extractor.py#L17-L134)
 ```python
   17 class BaseExtractor:
   18     """Base class for language-specific extractors."""
@@ -331,7 +331,7 @@ The `TemplateRenderer` is the heart of the system. It creates a Jinja2 environme
 
 When a renderer is created, it sets up the Jinja2 environment with the template directory as the loader root, and registers the extraction functions as globals:
 
-📍 [`projected_source/core/renderer.py:127-175`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/renderer.py#L89-L134) *(uncommitted)*
+📍 [`projected_source/core/renderer.py:127-175`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/renderer.py#L127-L175)
 ```python
  127     def __init__(
  128         self,
@@ -388,7 +388,7 @@ When a renderer is created, it sets up the Jinja2 environment with the template 
 
 This is the workhorse. Every `{{ code('file.cpp', function='foo') }}` call in a template invokes `_code_function`. It resolves the file path, picks the right extractor, extracts the requested symbol, optionally generates a GitHub permalink, adds line numbers, and returns formatted markdown:
 
-📍 [`projected_source/core/renderer.py:180-638`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/renderer.py#L139-L572) *(uncommitted)*
+📍 [`projected_source/core/renderer.py:180-638`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/renderer.py#L180-L638)
 ```python
  180     def _code_function(
  181         self,
@@ -875,7 +875,7 @@ This is limited to C/C++ extractor-backed files for now because the feature depe
 
 The renderer builds those non-contiguous display ranges here:
 
-📍 [`projected_source/core/renderer.py:934-963`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/renderer.py#L868-L897) *(uncommitted)*
+📍 [`projected_source/core/renderer.py:934-963`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/renderer.py#L934-L963)
 ```python
  934     def _build_enclosure_segments(self, file_path: Path, enclosed, context_lines: int) -> List[Tuple[str, int, int]]:
  935         """Build displayed source segments for an enclosed marker extraction."""
@@ -911,7 +911,7 @@ The renderer builds those non-contiguous display ranges here:
 
 C++ provides the first auto-enclosure implementation. It prefers a marker-wrapped declaration/function/class when the marker surrounds one exactly, otherwise it picks the closest useful containing construct:
 
-📍 [`projected_source/languages/cpp.py:476-522`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/languages/cpp.py#L476-L522)
+📍 [`projected_source/languages/cpp.py:476-522`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/languages/cpp.py#L476-L522)
 ```python
  476     def extract_marker_enclosed(self, file_path: Path, marker: str) -> EnclosedMarkerResult:
  477         """Extract a marker with the closest enclosing function/class-like C++ node."""
@@ -966,7 +966,7 @@ C++ provides the first auto-enclosure implementation. It prefers a marker-wrappe
 
 Templates can compose by including other files. Plain markdown files are included verbatim; `.j2` files are rendered as templates with full access to `code()`, caller variables, and other functions:
 
-📍 [`projected_source/core/renderer.py:750-769`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/renderer.py#L684-L703) *(uncommitted)*
+📍 [`projected_source/core/renderer.py:750-769`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/renderer.py#L750-L769)
 ```python
  750     @pass_context
  751     def _include_function(self, context, path: str) -> str:
@@ -994,7 +994,7 @@ Templates can compose by including other files. Plain markdown files are include
 
 When embedding a standalone walkthrough inside another document, use `include_body()`. It uses the same raw/rendered include rules, then strips leading YAML frontmatter and projected-source's generated metadata header:
 
-📍 [`projected_source/core/renderer.py:771-783`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/renderer.py#L705-L717) *(uncommitted)*
+📍 [`projected_source/core/renderer.py:771-783`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/renderer.py#L771-L783)
 ```python
  771     @pass_context
  772     def _include_body_function(self, context, path: str) -> str:
@@ -1015,7 +1015,7 @@ When embedding a standalone walkthrough inside another document, use `include_bo
 
 Projects can extend the template environment by placing a `.projected-source.py` file in the project. The renderer discovers it by walking up from the template directory to the git root:
 
-📍 [`projected_source/core/renderer.py:847-875`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/renderer.py#L781-L809) *(uncommitted)*
+📍 [`projected_source/core/renderer.py:847-875`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/renderer.py#L847-L875)
 ```python
  847     def _find_custom_tags_file(self, start_path: Path) -> Optional[Path]:
  848         """
@@ -1052,7 +1052,7 @@ Projects can extend the template environment by placing a `.projected-source.py`
 
 `code()` never raises on a failed extraction — it degrades the failure into the document so the render still completes and shows the problem in place. That means a template can render "successfully" and still be wrong, so the renderer records each failure as a `CodeError` while it works:
 
-📍 [`projected_source/core/renderer.py:43-57`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/renderer.py#L39) *(uncommitted)*
+📍 [`projected_source/core/renderer.py:43-57`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/renderer.py#L43-L57)
 ```python
   43 @dataclass(frozen=True)
   44 class CodeError:
@@ -1073,7 +1073,7 @@ Projects can extend the template environment by placing a `.projected-source.py`
 
 `render_result()` is the full-fidelity entry point. It returns the rendered text *and* the failures behind it — including failures inside included partials, since `include()` renders through this same renderer:
 
-📍 [`projected_source/core/renderer.py:1044-1080`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/renderer.py#L977-L1002) *(uncommitted)*
+📍 [`projected_source/core/renderer.py:1044-1080`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/renderer.py#L1044-L1080)
 ```python
 1044     def render_result(self, template_name: str, **context) -> RenderResult:
 1045         """
@@ -1118,7 +1118,7 @@ This is what `check` consumes to tell a broken document from a merely stale one.
 
 `render_template()` remains as a thin facade for callers that only want the text, and `render_template_file()` handles file paths:
 
-📍 [`projected_source/core/renderer.py:1082-1097`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/renderer.py#L1002) *(uncommitted)*
+📍 [`projected_source/core/renderer.py:1082-1097`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/renderer.py#L1082-L1097)
 ```python
 1082     def render_template(self, template_name: str, **context) -> str:
 1083         """
@@ -1148,7 +1148,7 @@ Every extracted code block can include a clickable GitHub permalink. The `GitHub
 
 Repository info is loaded on first access. The class auto-detects the GitHub URL from the git remote, handling both SSH and HTTPS formats:
 
-📍 [`projected_source/core/github.py:186-228`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/github.py#L186-L228)
+📍 [`projected_source/core/github.py:186-228`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/github.py#L186-L228)
 ```python
  186     def _init_repo_info(self):
  187         """Lazy initialization of repository information."""
@@ -1201,7 +1201,7 @@ When you're working on a file with uncommitted changes, the line numbers in your
 
 The full-diff parser builds a line-by-line mapping from new to old positions:
 
-📍 [`projected_source/core/github.py:37-83`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/github.py#L37-L83)
+📍 [`projected_source/core/github.py:37-83`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/github.py#L37-L83)
 ```python
   37 def build_line_mapping(diff_output: str) -> Dict[int, Optional[int]]:
   38     """
@@ -1254,7 +1254,7 @@ The full-diff parser builds a line-by-line mapping from new to old positions:
 
 This mapping is used by `map_to_committed_line()`, which falls back gracefully — if a line was newly added, it finds the nearest existing line before it:
 
-📍 [`projected_source/core/github.py:138-173`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/github.py#L138-L173)
+📍 [`projected_source/core/github.py:138-173`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/github.py#L138-L173)
 ```python
  138 def map_line_to_committed_full(new_line: int, diff_output: str) -> int:
  139     """
@@ -1298,7 +1298,7 @@ This mapping is used by `map_to_committed_line()`, which falls back gracefully �
 
 The `get_permalink()` method ties it all together — it maps lines, builds the URL with line anchors, and returns a markdown link:
 
-📍 [`projected_source/core/github.py:419-510`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/github.py#L419-L510)
+📍 [`projected_source/core/github.py:419-510`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/github.py#L419-L510)
 ```python
  419     def get_permalink(
  420         self, file_path: Path, start_line: int = None, end_line: int = None, display_committed_lines: bool = True
@@ -1398,7 +1398,7 @@ The `get_permalink()` method ties it all together — it maps lines, builds the 
 
 For deeper code archaeology, `blame=True` annotates each line with its author, date, and commit hash:
 
-📍 [`projected_source/core/github.py:573-603`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/github.py#L573-L603)
+📍 [`projected_source/core/github.py:573-603`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/github.py#L573-L603)
 ```python
  573     def format_with_blame(self, code_text: str, start_line: int, file_path: Path) -> str:
  574         """
@@ -1443,7 +1443,7 @@ One of the most powerful features: projected-source can verify that your documen
 
 The `ChangesSet` class tracks changed regions as a set of non-overlapping intervals per file. It supports adding regions (which auto-merge overlapping ranges), subtracting regions (which can split intervals), and querying what's left uncovered:
 
-📍 [`projected_source/core/changes_set.py:27-252`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/changes_set.py#L27-L252)
+📍 [`projected_source/core/changes_set.py:27-252`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/changes_set.py#L27-L252)
 ```python
   27 class ChangesSet:
   28     """
@@ -1677,7 +1677,7 @@ The `ChangesSet` class tracks changed regions as a set of non-overlapping interv
 
 `from_diff()` parses unified diff output to populate the set. It supports both simple base refs (`origin/main`) and explicit ranges (`HEAD~5..HEAD~2`):
 
-📍 [`projected_source/core/changes_set.py:40-73`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/changes_set.py#L40-L73)
+📍 [`projected_source/core/changes_set.py:40-73`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/changes_set.py#L40-L73)
 ```python
   40     @classmethod
   41     def from_diff(cls, base: Optional[str] = None, repo_path: Optional[Path] = None) -> "ChangesSet":
@@ -1717,7 +1717,7 @@ The `ChangesSet` class tracks changed regions as a set of non-overlapping interv
 
 The diff parser walks through hunk headers and added lines to build up the initial set of changed regions:
 
-📍 [`projected_source/core/changes_set.py:105-148`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/changes_set.py#L105-L148)
+📍 [`projected_source/core/changes_set.py:105-148`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/changes_set.py#L105-L148)
 ```python
  105     def _parse_diff(self, diff_output: str, repo_path: Path) -> None:
  106         """Parse unified diff output and populate regions."""
@@ -1769,7 +1769,7 @@ The diff parser walks through hunk headers and added lines to build up the initi
 
 As templates render, each `code()` call subtracts its extracted region. The `subtract()` method handles partial overlaps — if documentation covers the middle of a changed region, it splits into two uncovered remainders:
 
-📍 [`projected_source/core/changes_set.py:183-223`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/changes_set.py#L183-L223)
+📍 [`projected_source/core/changes_set.py:183-223`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/changes_set.py#L183-L223)
 ```python
  183     def subtract(self, file_path: Path, start: int, end: int) -> None:
  184         """
@@ -1816,7 +1816,7 @@ As templates render, each `code()` call subtracts its extracted region. The `sub
 
 After rendering, `uncovered()` returns whatever's left:
 
-📍 [`projected_source/core/changes_set.py:225-231`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/core/changes_set.py#L225-L231)
+📍 [`projected_source/core/changes_set.py:225-231`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/core/changes_set.py#L225-L231)
 ```python
  225     def uncovered(self) -> List[ChangeRegion]:
  226         """Return list of regions not yet claimed by documentation."""
@@ -1833,7 +1833,7 @@ After rendering, `uncovered()` returns whatever's left:
 
 The CLI is built with Click. The main entry point registers all commands:
 
-📍 [`projected_source/cli/__init__.py:20-30`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/cli/__init__.py#L20-L30)
+📍 [`projected_source/cli/__init__.py:20-30`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/cli/__init__.py#L20-L30)
 ```python
   20 @click.group()
   21 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
@@ -1856,7 +1856,7 @@ C/C++ extractor-backed marker extracts default to `enclosure_context=3`. `--encl
 
 Single-file rendering resolves the template path, creates a `TemplateRenderer`, and writes the output:
 
-📍 [`projected_source/cli/render.py:534-579`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/cli/render.py#L534-L579)
+📍 [`projected_source/cli/render.py:534-579`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/cli/render.py#L534-L579)
 ```python
  534 def _render_file(
  535     input_file,
@@ -1908,7 +1908,7 @@ Single-file rendering resolves the template path, creates a `TemplateRenderer`, 
 
 Directory rendering walks the tree and renders all `.j2` files:
 
-📍 [`projected_source/cli/render.py:582-657`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/cli/render.py#L582-L657)
+📍 [`projected_source/cli/render.py:582-657`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/cli/render.py#L582-L657)
 ```python
  582 def _render_directory(
  583     input_dir,
@@ -1992,7 +1992,7 @@ Directory rendering walks the tree and renders all `.j2` files:
 
 The `list-functions` command is essential for authoring templates — it shows every extractable symbol in a file, including the parameter you'd use in a `code()` call:
 
-📍 [`projected_source/cli/list_symbols.py:15-107`](https://github.com/sublimator/projected-source/blob/5d71911a86153a2016334c48ca43fff7cab3d41f/projected_source/cli/list_symbols.py#L15-L107)
+📍 [`projected_source/cli/list_symbols.py:15-107`](https://github.com/sublimator/projected-source/blob/6a6e12f65e97cb80d4196dce9e0cb3678be59112/projected_source/cli/list_symbols.py#L15-L107)
 ```python
   15 @click.command("list-functions")
   16 @click.argument("file", required=False, type=click.Path(exists=True, dir_okay=False))
