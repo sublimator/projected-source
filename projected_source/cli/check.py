@@ -23,9 +23,17 @@ STALE = "stale"
 UNRENDERED = "unrendered"
 BROKEN = "broken"
 
+# Permalinks pin to the commit that was HEAD when the document was rendered, so
+# every commit rewrites every permalink in every document. That is not a content
+# change — the link still resolves, to a commit where the code was identical —
+# and treating it as one would make each document stale the instant it was
+# committed, which never converges. The pre-push hook has always normalized
+# these away; check must agree with it.
+PERMALINK_COMMIT_RE = re.compile(r"/blob/[0-9a-f]{7,40}/")
+
 
 def _normalize(text: str) -> str:
-    """Strip the volatile metadata header for comparison.
+    """Strip the volatile metadata header and permalink SHAs for comparison.
 
     Frontmatter is real content and is preserved; only projected-source's
     generated header (rendered_at/branch/commit lines and the last-updated
@@ -48,6 +56,7 @@ def _normalize(text: str) -> str:
     # stripping only the latter makes every such document look permanently
     # stale. Trailing-newline differences (Jinja's keep_trailing_newline vs
     # editors) are not staleness either.
+    text = PERMALINK_COMMIT_RE.sub("/blob/COMMIT/", text)
     return (front + text.lstrip("\r\n")).rstrip("\r\n")
 
 

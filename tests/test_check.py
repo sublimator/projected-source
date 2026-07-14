@@ -56,6 +56,22 @@ def test_normalize_ignores_leading_blank_lines_from_no_output_statements():
     assert _normalize(fresh) == _normalize(HEADER + "\n" + body)
 
 
+def test_normalize_ignores_permalink_commit_churn():
+    """Re-pinned permalinks are not staleness.
+
+    Permalinks pin to HEAD at render time, so every commit rewrites every
+    permalink in every document. Counting that as a content change makes a
+    document stale the moment it is committed — and re-rendering only re-pins
+    it to the next commit, so it never converges. The pre-push hook has always
+    normalized these away; check agrees.
+    """
+    link = "📍 [`a.py:1-2`](https://github.com/o/r/blob/{}/a.py#L1-L2)\n"
+    old = HEADER + "\n" + link.format("5d71911a86153a2016334c48ca43fff7cab3d41f")
+    new = HEADER + "\n" + link.format("2245518a7c26223597cb8c9ed9d6b4c203dde35e")
+
+    assert _normalize(old) == _normalize(new)
+
+
 def _write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
