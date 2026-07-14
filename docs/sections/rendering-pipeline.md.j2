@@ -64,6 +64,16 @@ Projects can extend the template environment by placing a `.projected-source.py`
 
 ### Rendering
 
-The public API is straightforward — `render_template()` for named templates and `render_template_file()` for file paths:
+`code()` never raises on a failed extraction — it degrades the failure into the document so the render still completes and shows the problem in place. That means a template can render "successfully" and still be wrong, so the renderer records each failure as a `CodeError` while it works:
+
+{{ code('projected_source/core/renderer.py', struct='CodeError') }}
+
+`render_result()` is the full-fidelity entry point. It returns the rendered text *and* the failures behind it — including failures inside included partials, since `include()` renders through this same renderer:
+
+{{ code('projected_source/core/renderer.py', function='TemplateRenderer.render_result') }}
+
+This is what `check` consumes to tell a broken document from a merely stale one. The alternative — scanning the rendered text for the error marker — cannot distinguish a real failure from a document that legitimately *quotes* error-handling source. This page does exactly that, several times over.
+
+`render_template()` remains as a thin facade for callers that only want the text, and `render_template_file()` handles file paths:
 
 {{ code('projected_source/core/renderer.py', function='TemplateRenderer.render_template') }}
