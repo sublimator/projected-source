@@ -8,6 +8,7 @@ import logging
 import re
 import subprocess
 import tempfile
+from dataclasses import dataclass, field
 from inspect import signature as inspect_signature
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+ERROR_PREFIX = "❌ **ERROR**:"
+
 MARKER_DIRECTIVE_RE = re.compile(r"^\s*(?://|#|--)\s*@@(?:start|end)\b")
 FRONTMATTER_RE = re.compile(r"\A---[ \t]*\r?\n.*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 PROJECTED_SOURCE_HEADER_RE = re.compile(
@@ -35,6 +38,41 @@ PROJECTED_SOURCE_HEADER_RE = re.compile(
     r"\r?\n---[ \t]*(?:\r?\n|\Z)",
     re.DOTALL,
 )
+
+
+@dataclass(frozen=True)
+class CodeError:
+    """A code() extraction that failed during a render.
+
+    file_path/target are the template's own words for what it asked for, so a
+    caller can report the failure without re-deriving it from the output.
+    """
+
+    message: str
+    file_path: str
+    target: Optional[str] = None
+
+    def __str__(self) -> str:
+        where = f"{self.file_path} ({self.target})" if self.target else self.file_path
+        return f"{where}: {self.message}"
+
+
+@dataclass
+class RenderResult:
+    """A rendered document plus the extractions that failed producing it.
+
+    code() degrades failures into the text rather than raising, so a render can
+    succeed and still be wrong. Consult errors — never scan text for
+    ERROR_PREFIX: a document that legitimately quotes error-handling source
+    would look broken.
+    """
+
+    text: str
+    errors: List[CodeError] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
 
 
 class CodeContextExtension(Extension):
@@ -115,6 +153,9 @@ class TemplateRenderer:
         self.changes_set = changes_set
         self.default_enclosure_context = self._normalize_enclosure_context(default_enclosure_context)
         self.github = GitHubIntegration(self.repo_path)
+
+        # Failed code() extractions for the render in flight; reset per render.
+        self._errors: List[CodeError] = []
 
         # Create Jinja2 environment
         self.env = jinja2.Environment(
@@ -200,6 +241,32 @@ class TemplateRenderer:
         tmp_file = None
         resolved_path: Optional[Path] = None
         display_segments: Optional[List[Tuple[str, int, int]]] = None
+
+        target = ", ".join(
+            f"{name}={value}"
+            for name, value in (
+                ("function", function),
+                ("struct", struct),
+                ("var", var),
+                ("function_macro", function_macro),
+                ("macro_definition", macro_definition),
+                ("marker", marker),
+                ("message", message),
+                ("enum", enum),
+                ("service", service),
+                ("lines", lines),
+            )
+            if value
+        )
+
+        def fail(message: str) -> str:
+            # Record the failure so callers can find it structurally, then
+            # degrade it into the document so the render still completes and
+            # shows the problem where it happened. file_path is read at call
+            # time, so it reflects any code_root prefix applied below.
+            self._errors.append(CodeError(message, file_path, target or None))
+            return f"{ERROR_PREFIX} {message}"
+
         try:
             context_lines = self._normalize_enclosure_context(
                 self.default_enclosure_context if enclosure_context is None else enclosure_context
@@ -270,7 +337,7 @@ class TemplateRenderer:
                             f"'{function}' in {file_path}"
                         )
                     elif require_enclosure_context:
-                        return "❌ **ERROR**: Function marker enclosure not supported for this file type"
+                        return fail("Function marker enclosure not supported for this file type")
                     elif hasattr(extractor, "extract_function_marker"):
                         code_text, start_line, end_line = self._call_function_marker_method(
                             extractor.extract_function_marker,
@@ -281,7 +348,7 @@ class TemplateRenderer:
                         )
                         logger.info(f"Extracted marker '{marker}' from function '{function}' in {file_path}")
                     else:
-                        return "❌ **ERROR**: Function marker extraction not supported for this file type"
+                        return fail("Function marker extraction not supported for this file type")
                 else:
                     code_text, start_line, end_line = extractor.extract_function(resolved_path, function, signature)
                     logger.info(f"Extracted function '{function}' from {file_path}")
@@ -311,14 +378,14 @@ class TemplateRenderer:
                             f"'{macro_spec}' in {file_path}"
                         )
                     elif require_enclosure_context:
-                        return "❌ **ERROR**: Function macro marker enclosure not supported for this file type"
+                        return fail("Function macro marker enclosure not supported for this file type")
                     elif hasattr(extractor, "extract_function_macro_marker"):
                         code_text, start_line, end_line = extractor.extract_function_macro_marker(
                             resolved_path, macro_spec, marker
                         )
                         logger.info(f"Extracted marker '{marker}' from function_macro '{macro_spec}' in {file_path}")
                     else:
-                        return "❌ **ERROR**: Function macro marker extraction not supported for this file type"
+                        return fail("Function macro marker extraction not supported for this file type")
                 else:
                     code_text, start_line, end_line = extractor.extract_function_macro(resolved_path, macro_spec)
                     logger.info(f"Extracted function_macro '{macro_spec}' from {file_path}")
@@ -349,19 +416,19 @@ class TemplateRenderer:
                                 f"'{var}' in {file_path}"
                             )
                         elif require_enclosure_context:
-                            return "❌ **ERROR**: Marker enclosure in variable not supported"
+                            return fail("Marker enclosure in variable not supported")
                         elif hasattr(extractor, "extract_struct_marker"):
                             code_text, start_line, end_line = extractor.extract_struct_marker(
                                 resolved_path, var, marker
                             )
                             logger.info(f"Extracted marker '{marker}' from variable '{var}' in {file_path}")
                         else:
-                            return "❌ **ERROR**: Marker extraction in variable not supported"
+                            return fail("Marker extraction in variable not supported")
                     else:
                         code_text, start_line, end_line = extractor.extract_struct(resolved_path, var)
                         logger.info(f"Extracted variable '{var}' from {file_path}")
                 else:
-                    return "❌ **ERROR**: Variable extraction not supported for this file type"
+                    return fail("Variable extraction not supported for this file type")
             elif struct:
                 # Extract struct/class/enum definition
                 if hasattr(extractor, "extract_struct"):
@@ -382,19 +449,19 @@ class TemplateRenderer:
                                 f"'{struct}' in {file_path}"
                             )
                         elif require_enclosure_context:
-                            return "❌ **ERROR**: Marker enclosure in struct not supported"
+                            return fail("Marker enclosure in struct not supported")
                         elif hasattr(extractor, "extract_struct_marker"):
                             code_text, start_line, end_line = extractor.extract_struct_marker(
                                 resolved_path, struct, marker
                             )
                             logger.info(f"Extracted marker '{marker}' from struct '{struct}' in {file_path}")
                         else:
-                            return "❌ **ERROR**: Marker extraction in struct not supported"
+                            return fail("Marker extraction in struct not supported")
                     else:
                         code_text, start_line, end_line = extractor.extract_struct(resolved_path, struct)
                         logger.info(f"Extracted struct/class '{struct}' from {file_path}")
                 else:
-                    return "❌ **ERROR**: Struct/class extraction not supported for this file type"
+                    return fail("Struct/class extraction not supported for this file type")
             elif message:
                 # Extract protobuf message
                 if hasattr(extractor, "extract_message"):
@@ -415,7 +482,7 @@ class TemplateRenderer:
                                 f"'{message}' in {file_path}"
                             )
                         elif require_enclosure_context:
-                            return "❌ **ERROR**: Message marker enclosure not supported for this file type"
+                            return fail("Message marker enclosure not supported for this file type")
                         else:
                             code_text, start_line, end_line = extractor.extract_message_marker(
                                 resolved_path, message, marker
@@ -425,21 +492,21 @@ class TemplateRenderer:
                         code_text, start_line, end_line = extractor.extract_message(resolved_path, message)
                         logger.info(f"Extracted message '{message}' from {file_path}")
                 else:
-                    return "❌ **ERROR**: Message extraction not supported for this file type"
+                    return fail("Message extraction not supported for this file type")
             elif enum:
                 # Extract protobuf enum
                 if hasattr(extractor, "extract_enum"):
                     code_text, start_line, end_line = extractor.extract_enum(resolved_path, enum)
                     logger.info(f"Extracted enum '{enum}' from {file_path}")
                 else:
-                    return "❌ **ERROR**: Enum extraction not supported for this file type"
+                    return fail("Enum extraction not supported for this file type")
             elif service:
                 # Extract protobuf service
                 if hasattr(extractor, "extract_service"):
                     code_text, start_line, end_line = extractor.extract_service(resolved_path, service)
                     logger.info(f"Extracted service '{service}' from {file_path}")
                 else:
-                    return "❌ **ERROR**: Service extraction not supported for this file type"
+                    return fail("Service extraction not supported for this file type")
             elif marker:
                 if (context_lines or explicit_enclosure) and hasattr(extractor, "extract_marker_enclosed"):
                     enclosed = extractor.extract_marker_enclosed(resolved_path, marker)
@@ -450,7 +517,7 @@ class TemplateRenderer:
                         )
                     logger.info(f"Extracted marker '{marker}' with auto enclosure in {file_path}")
                 elif require_enclosure_context:
-                    return "❌ **ERROR**: Auto marker enclosure not supported for this file type"
+                    return fail("Auto marker enclosure not supported for this file type")
                 else:
                     code_text, start_line, end_line = extractor.extract_marker(resolved_path, marker)
                     logger.info(f"Extracted marker '{marker}' from {file_path}")
@@ -459,9 +526,9 @@ class TemplateRenderer:
                 code_text, start_line, end_line = extractor.extract_lines(resolved_path, start_line, end_line)
                 logger.info(f"Extracted lines {start_line}-{end_line} from {file_path}")
             else:
-                return (
-                    f"❌ **ERROR**: Must specify function, struct, var, function_macro, "
-                    f"macro_definition, lines, or marker for {file_path}"
+                return fail(
+                    "Must specify function, struct, var, function_macro, "
+                    "macro_definition, lines, or marker"
                 )
 
             # Use original file path for display (not temp file)
@@ -559,12 +626,11 @@ class TemplateRenderer:
             return f"{header}\n```{language}\n{code_text}\n```"
 
         except Exception as e:
-            error_msg = f"❌ **ERROR**: {e}"
             logger.error(f"Code extraction failed: {e}")
             # Collect file as fixture if collection is enabled
             if resolved_path is not None:
                 _collect_error_fixture(resolved_path, str(e))
-            return error_msg
+            return fail(str(e))
 
         finally:
             # Clean up temp file if we created one
@@ -975,9 +1041,51 @@ class TemplateRenderer:
 
         return "\n".join(numbered_lines)
 
+    def render_result(self, template_name: str, **context) -> RenderResult:
+        """
+        Render a template, reporting the extractions that failed along the way.
+
+        code() does not raise when an extraction fails — it degrades the failure
+        into the document — so a template can render "successfully" and still be
+        wrong. This is the full-fidelity entry point: it returns the text
+        together with a structured CodeError per failure, including failures
+        from included templates (include() renders through this same renderer).
+
+        Prefer this over render_template() when you need to know whether the
+        document is actually healthy. Do not scan the text for ERROR_PREFIX —
+        a document quoting error-handling source would look broken.
+
+        Args:
+            template_name: Name of the template file
+            **context: Additional context variables
+
+        Returns:
+            RenderResult with the rendered text and any failed extractions
+        """
+        self._errors = []
+        try:
+            # Load custom tags from .projected-source.py if available
+            template_path = self.template_dir / template_name
+            self._load_custom_tags(template_path)
+
+            template = self.env.get_template(template_name)
+            text = template.render(**context)
+        except jinja2.TemplateNotFound:
+            logger.error(f"Template not found: {template_name}")
+            raise
+        except Exception as e:
+            logger.error(f"Template rendering failed: {e}")
+            raise
+
+        return RenderResult(text, list(self._errors))
+
     def render_template(self, template_name: str, **context) -> str:
         """
         Render a template with the given context.
+
+        Convenience facade over render_result() for callers that only want the
+        text. Failed extractions are still visible in the output, but if you
+        need to detect them, use render_result().
 
         Args:
             template_name: Name of the template file
@@ -986,19 +1094,7 @@ class TemplateRenderer:
         Returns:
             Rendered template as string
         """
-        try:
-            # Load custom tags from .projected-source.py if available
-            template_path = self.template_dir / template_name
-            self._load_custom_tags(template_path)
-
-            template = self.env.get_template(template_name)
-            return template.render(**context)
-        except jinja2.TemplateNotFound:
-            logger.error(f"Template not found: {template_name}")
-            raise
-        except Exception as e:
-            logger.error(f"Template rendering failed: {e}")
-            raise
+        return self.render_result(template_name, **context).text
 
     def render_template_file(self, template_path: Path, output_path: Path = None, **context):
         """
