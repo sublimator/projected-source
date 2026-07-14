@@ -22,6 +22,7 @@ def test_guide_renders():
     """The f-string must not have stray unbalanced braces."""
     output = _guide_output()
     assert output.startswith("# projected-source AI Guide")
+    assert "projected-source render template.md.j2 --html" in output
     # Doubled braces in the f-string must collapse to single literal braces.
     assert "{{ code(" in output
     assert "{{{{" not in output

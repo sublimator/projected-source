@@ -37,12 +37,20 @@ projected-source render template.md.j2
 # Render to stdout
 projected-source render template.md.j2 -
 
+# Render a self-contained, styled HTML document (foo.md.j2 -> foo.html)
+projected-source render template.md.j2 --html
+
 # Render a directory of templates
 projected-source render docs/
 
 # Change C/C++ marker enclosure context globally; use 0 to disable
 projected-source render docs/ --enclosure-context 2
 ```
+
+`--html` is a final presentation transform: projection and Jinja rendering
+still produce Markdown first, then projected-source wraps it in responsive,
+self-contained HTML. Raw HTML such as `<details>` is preserved. The default
+remains Markdown (`--no-html`).
 
 ### In Templates
 

@@ -70,6 +70,9 @@ projected-source render template.md.j2
 # Render to specific output
 projected-source render template.md.j2 output.md
 
+# Render Markdown into a self-contained readable HTML document
+projected-source render template.md.j2 --html
+
 # Render directory of templates
 projected-source render docs/
 
@@ -80,6 +83,11 @@ projected-source list-functions src/file.cpp
 projected-source render docs/ -V auto              # auto-detect base
 projected-source render docs/ -V auto --strict     # exit 1 if uncovered
 ```
+
+`--html` is only a final presentation transform. Template evaluation and
+source projection still produce Markdown first; `--no-html` remains the
+default. The generated HTML has embedded responsive styling and preserves raw
+HTML such as `<details>` without requiring external assets.
 
 ## Recipe: throwaway docs (PR descriptions, reviews)
 

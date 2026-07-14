@@ -16,6 +16,7 @@ from typing import Optional
 import click
 
 from ..core.changes_set import ChangesSet
+from ..core.html import default_html_output, markdown_to_html
 from ..core.renderer import TemplateRenderer
 from .helpers import FixtureCollector, console, get_fixture_collector, set_fixture_collector
 
@@ -176,6 +177,12 @@ def _apply_header(header: str, rendered: str) -> str:
     help="Prepend a metadata comment and 'Last updated' line to rendered output (default: on)",
 )
 @click.option(
+    "--html/--no-html",
+    "html_output",
+    default=False,
+    help="Wrap rendered Markdown in a self-contained styled HTML document (default: off)",
+)
+@click.option(
     "--enclosure-context",
     type=click.IntRange(min=0),
     default=3,
@@ -193,23 +200,25 @@ def render(
     strict,
     commit,
     header,
+    html_output,
     enclosure_context,
 ):
     """
-    Render Jinja2 templates to markdown.
+    Render Jinja2 templates to Markdown or styled HTML.
 
     INPUT_PATH can be a .j2 file, a directory containing .j2 files, or '-' for stdin.
     OUTPUT_PATH can be a file, directory, or '-' for stdout.
 
     If OUTPUT_PATH is not specified:
-      - Files are rendered in-place (foo.md.j2 -> foo.md)
-      - Directories are processed in-place (all .j2 files have extension stripped)
+      - Files are rendered in-place (foo.md.j2 -> foo.md, or foo.html with --html)
+      - Directories are processed in-place (all .j2 files have extension stripped, or become .html)
       - Stdin defaults to stdout
 
     Examples:
         projected-source render template.md.j2           # Creates template.md
         projected-source render template.md.j2 -         # Output to stdout
         projected-source render template.md.j2 out.md    # Output to out.md
+        projected-source render template.md.j2 --html    # Output to template.html
         projected-source render templates/               # Process directory in-place
         projected-source render templates/ docs/         # Output to docs/
         echo "{{ code('file.cpp', function='main') }}" | projected-source render - -
@@ -248,9 +257,9 @@ def render(
             output_is_dir = True
             output_to_stdout = False
         else:
-            # Strip .j2 extension for in-place file rendering
+            # Strip .j2 extension for Markdown, or map to .html.
             if input_path.suffix == ".j2":
-                output_path = input_path.with_suffix("")
+                output_path = default_html_output(input_path) if html_output else input_path.with_suffix("")
             else:
                 console.print("[red]✗ Input file must have .j2 extension for in-place rendering[/red]")
                 sys.exit(1)
@@ -307,6 +316,7 @@ def render(
                 remap_dirty_lines,
                 changes_set,
                 header,
+                html_output,
                 enclosure_context,
             )
         elif input_is_dir:
@@ -317,6 +327,7 @@ def render(
                 remap_dirty_lines,
                 changes_set,
                 header,
+                html_output,
                 enclosure_context,
             )
         else:
@@ -328,6 +339,7 @@ def render(
                 remap_dirty_lines,
                 changes_set,
                 header,
+                html_output,
                 enclosure_context,
             )
 
@@ -397,6 +409,7 @@ def _render_stdin(
     remap_dirty_lines=False,
     changes_set=None,
     header=False,
+    html_output=False,
     enclosure_context=3,
 ):
     """Render template from stdin."""
@@ -418,6 +431,8 @@ def _render_stdin(
 
         if header:
             rendered = _apply_header(_build_header("<stdin>", repo_path), rendered)
+        if html_output:
+            rendered = markdown_to_html(rendered, title_hint="Document")
 
         if output_to_stdout:
             # Output to stdout
@@ -441,6 +456,7 @@ def _render_file(
     remap_dirty_lines=False,
     changes_set=None,
     header=False,
+    html_output=False,
     enclosure_context=3,
 ):
     """Render a single template file."""
@@ -462,6 +478,9 @@ def _render_file(
 
         if header:
             rendered = _apply_header(_build_header(template_name, repo_path), rendered)
+        if html_output:
+            title_hint = Path(template_name).with_suffix("").stem.replace("-", " ").replace("_", " ").title()
+            rendered = markdown_to_html(rendered, title_hint=title_hint)
 
         if output_to_stdout:
             # Output to stdout
@@ -484,6 +503,7 @@ def _render_directory(
     remap_dirty_lines=False,
     changes_set=None,
     header=False,
+    html_output=False,
     enclosure_context=3,
 ):
     """Render all templates in a directory."""
@@ -512,8 +532,10 @@ def _render_directory(
     for template_path in templates:
         rel_path = template_path.relative_to(input_dir)
 
-        # Determine output path (strip .j2 extension)
-        if rel_path.suffix == ".j2":
+        # Determine output path (strip .j2 extension, or map to .html)
+        if html_output:
+            output_rel_path = default_html_output(rel_path)
+        elif rel_path.suffix == ".j2":
             output_rel_path = rel_path.with_suffix("")
         else:
             output_rel_path = rel_path
@@ -526,6 +548,9 @@ def _render_directory(
 
             if header:
                 rendered = _apply_header(_build_header(str(rel_path), repo_path), rendered)
+            if html_output:
+                title_hint = rel_path.with_suffix("").stem.replace("-", " ").replace("_", " ").title()
+                rendered = markdown_to_html(rendered, title_hint=title_hint)
 
             # Write output
             output_path_full.parent.mkdir(parents=True, exist_ok=True)

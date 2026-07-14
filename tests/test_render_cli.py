@@ -261,6 +261,90 @@ def test_header_prepended_when_no_frontmatter(tmp_path):
     assert out.lstrip().startswith("<!--"), f"header not prepended; got: {out[:40]!r}"
 
 
+def test_render_html_uses_frontmatter_title_and_preserves_markdown_features(tmp_path):
+    template = tmp_path / "design.md.j2"
+    template.write_text(
+        '---\ntitle: "Readable Design"\n---\n\n'
+        "# Visible heading\n\n"
+        "| A | B |\n|---|---|\n| 1 | 2 |\n\n"
+        "```cpp\nint main() {}\n```\n\n"
+        "<details><summary>Proof</summary>Body</details>\n"
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["render", str(template), "--html", "--repo-path", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    output = tmp_path / "design.html"
+    rendered = output.read_text()
+    assert rendered.startswith("<!doctype html>")
+    assert "<title>Readable Design</title>" in rendered
+    assert 'title: "Readable Design"' not in rendered
+    assert '<h1 id="visible-heading">Visible heading</h1>' in rendered
+    assert "<table>" in rendered
+    assert '<code class="language-cpp">' in rendered
+    assert "<details><summary>Proof</summary>Body</details>" in rendered
+    assert "Last updated:" in rendered
+
+
+def test_render_html_stdout_does_not_change_markdown_default(tmp_path):
+    runner = CliRunner()
+    template = "# Hello\n\nA **small** document.\n"
+
+    markdown = runner.invoke(
+        cli,
+        ["render", "-", "-", "--repo-path", str(tmp_path), "--no-header"],
+        input=template,
+    )
+    html_result = runner.invoke(
+        cli,
+        ["render", "-", "-", "--repo-path", str(tmp_path), "--no-header", "--html"],
+        input=template,
+    )
+    explicit_markdown = runner.invoke(
+        cli,
+        ["render", "-", "-", "--repo-path", str(tmp_path), "--no-header", "--no-html"],
+        input=template,
+    )
+
+    assert markdown.exit_code == 0, markdown.output
+    assert markdown.output == template
+    assert explicit_markdown.exit_code == 0, explicit_markdown.output
+    assert explicit_markdown.output == markdown.output
+    assert html_result.exit_code == 0, html_result.output
+    assert "<title>Hello</title>" in html_result.output
+    assert '<h1 id="hello">Hello</h1>' in html_result.output
+    assert "<strong>small</strong>" in html_result.output
+
+
+def test_render_html_directory_maps_markdown_templates_to_html(tmp_path):
+    templates = tmp_path / "templates"
+    output = tmp_path / "site"
+    templates.mkdir()
+    (templates / "guide.md.j2").write_text("# Guide\n")
+    (templates / "notes.j2").write_text("# Notes\n")
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "render",
+            str(templates),
+            str(output),
+            "--html",
+            "--no-header",
+            "--repo-path",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (output / "guide.html").exists()
+    assert (output / "notes.html").exists()
+    assert not (output / "guide.md").exists()
+
+
 def test_render_enclosure_context_default(tmp_path):
     """Marker-only code() calls get enclosure context by default."""
     source = tmp_path / "example.cpp"
