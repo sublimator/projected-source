@@ -9,6 +9,7 @@ rewriting any rendered output.
 from click.testing import CliRunner
 
 from projected_source.cli.check import _normalize, check
+from projected_source.core.renderer import TemplateRenderer
 
 HEADER = (
     "<!--\n"
@@ -38,6 +39,21 @@ def test_normalize_strips_header_and_keeps_frontmatter():
         "2026-07-12", "2026-08-01"
     )
     assert _normalize(HEADER + "\n" + body) == _normalize(other + "\n" + body)
+
+
+def test_normalize_ignores_leading_blank_lines_from_no_output_statements():
+    """A document opening with no-output statements is not stale.
+
+    {{ ignore_changes(...) }} at the top of a template renders to a blank line.
+    The committed document keeps those blanks tucked behind the metadata header,
+    a fresh render carries them at the front. Normalizing only the committed
+    side made every such document — including this project's own overview —
+    report stale on every run.
+    """
+    body = "# Title\n\ncontent\n"
+    fresh = "\n\n\n" + body  # three ignore_changes() calls rendered to nothing
+
+    assert _normalize(fresh) == _normalize(HEADER + "\n" + body)
 
 
 def _write(path, text):
@@ -105,3 +121,63 @@ def test_check_single_file(tmp_path):
     result = CliRunner().invoke(check, [str(template), "-r", str(tmp_path)])
     assert result.exit_code == 0
     assert "1 ok, 0 stale, 0 unrendered, 0 broken" in result.output
+
+
+# Quoting error-handling code is not an error.
+#
+# check used to decide a render was broken by scanning the output for
+# "❌ **ERROR**:". projected-source documents its own renderer, whose source is
+# full of `return "❌ **ERROR**: ..."` — so the extracted code tripped the
+# detector and check declared this project's own docs broken. Failures are now
+# reported structurally by render_result(); nothing scans the text.
+QUOTED_ERROR_SOURCE = 'def handler():\n    return "❌ **ERROR**: not supported"\n'
+
+
+def test_quoted_error_source_is_not_broken(tmp_path):
+    docs = tmp_path / "docs"
+    _write(tmp_path / "src.py", QUOTED_ERROR_SOURCE)
+    _write(docs / "quotes.md.j2", "{{ code('src.py', function='handler', github=False) }}\n")
+
+    result = CliRunner().invoke(check, [str(docs / "quotes.md.j2"), "-r", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "0 broken" in result.output
+    assert "BROKEN" not in result.output
+
+
+def test_render_result_separates_real_failures_from_quoted_ones(tmp_path):
+    _write(tmp_path / "src.py", QUOTED_ERROR_SOURCE)
+
+    # Quoting the error string is healthy: it lands in the text, not in errors.
+    _write(tmp_path / "quotes.md.j2", "{{ code('src.py', function='handler', github=False) }}\n")
+    quoted = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path).render_result("quotes.md.j2")
+    assert quoted.ok
+    assert quoted.errors == []
+    assert "❌ **ERROR**:" in quoted.text  # the marker IS present — as quoted source
+
+    # A genuine extraction failure is reported, with the template's own words
+    # for what it asked for, and still degrades into the text.
+    _write(tmp_path / "missing.md.j2", "{{ code('src.py', function='nope', github=False) }}\n")
+    missing = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path).render_result("missing.md.j2")
+    assert not missing.ok
+    assert len(missing.errors) == 1
+    assert missing.errors[0].file_path == "src.py"
+    assert "function=nope" in missing.errors[0].target
+    assert "❌ **ERROR**:" in missing.text
+
+
+def test_render_result_collects_errors_from_includes(tmp_path):
+    """Failures inside included partials surface on the parent's result.
+
+    system-overview.md.j2 is a shell of include()s; if errors did not propagate
+    up, checking the parent would report a healthy document.
+    """
+    _write(tmp_path / "partial.md.j2", "{{ code('src.py', function='nope', github=False) }}\n")
+    _write(tmp_path / "parent.md.j2", "{{ include('partial.md.j2') }}\n")
+    _write(tmp_path / "src.py", QUOTED_ERROR_SOURCE)
+
+    result = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path).render_result("parent.md.j2")
+
+    assert not result.ok
+    assert len(result.errors) == 1
+    assert "function=nope" in result.errors[0].target

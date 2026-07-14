@@ -39,11 +39,16 @@ def _normalize(text: str) -> str:
 
     header = PROJECTED_SOURCE_HEADER_RE.match(text)
     if header:
-        text = text[header.end() :].lstrip("\r\n")
+        text = text[header.end() :]
 
-    # Trailing-newline differences (Jinja's keep_trailing_newline vs editors)
-    # are not staleness.
-    return (front + text).rstrip("\r\n")
+    # Leading blank lines are an artifact of template statements that render to
+    # nothing ({{ ignore_changes(...) }} and friends at the top of a document).
+    # Strip them from BOTH sides: a freshly rendered document still carries
+    # them, while a committed one has them tucked behind the metadata header —
+    # stripping only the latter makes every such document look permanently
+    # stale. Trailing-newline differences (Jinja's keep_trailing_newline vs
+    # editors) are not staleness either.
+    return (front + text.lstrip("\r\n")).rstrip("\r\n")
 
 
 def _check_template(template: Path, repo_path: Path) -> tuple[str, str]:
@@ -53,23 +58,21 @@ def _check_template(template: Path, repo_path: Path) -> tuple[str, str]:
         repo_path=repo_path,
     )
     try:
-        rendered = renderer.render_template(template.name)
+        result = renderer.render_result(template.name)
     except Exception as e:  # render errors are the finding, not a crash
         return BROKEN, re.sub(r"\s+", " ", str(e))[:300]
 
     # The renderer degrades extraction failures into the output instead of
-    # raising (missing markers, moved functions, deleted files). A render
-    # that "succeeds" with embedded errors is broken, not stale.
-    embedded = [
-        line.strip()
-        for line in rendered.splitlines()
-        if "❌ **ERROR**:" in line
-    ]
-    if embedded:
-        first = embedded[0].replace("❌ **ERROR**:", "").strip()
-        more = f" (+{len(embedded) - 1} more)" if len(embedded) > 1 else ""
+    # raising (missing markers, moved functions, deleted files). A render that
+    # "succeeds" with failed extractions is broken, not stale. render_result
+    # reports them structurally — do not scan the text, or a document quoting
+    # error-handling source (as ours does) would report itself broken.
+    if result.errors:
+        first = re.sub(r"\s+", " ", str(result.errors[0]))
+        more = f" (+{len(result.errors) - 1} more)" if len(result.errors) > 1 else ""
         return BROKEN, f"{first[:200]}{more}"
 
+    rendered = result.text
     rendered_path = template.with_suffix("") if template.suffix == ".j2" else None
     if rendered_path is None or not rendered_path.exists():
         return UNRENDERED, "no committed rendering beside the template"
