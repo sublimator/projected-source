@@ -89,16 +89,15 @@ class TestCppParserListSymbols:
         assert simple_class["kind"] == "class"
 
     def test_finds_enums(self, parser, complete_file):
-        """Test that enums are found with param='struct'."""
+        """Test that enums are found with param='enum' (extract_enum exists)."""
         source = complete_file.read_bytes()
         symbols = parser.list_symbols(source)
 
         # MyNamespace::NamespacedClass contains an enum via the class_specifier
         # Look for any enum in the symbols
         enum_symbols = [s for s in symbols if s["kind"] == "enum"]
-        # All C++ enums should use param='struct'
         for sym in enum_symbols:
-            assert sym["param"] == "struct"
+            assert sym["param"] == "enum"
 
     def test_finds_namespaced_structs(self, parser, complete_file):
         """Test that namespaced structs are found."""

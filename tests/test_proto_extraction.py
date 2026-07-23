@@ -89,3 +89,47 @@ message Foo {
             assert by_name["example1"]["end_line"] == 6
         finally:
             temp_path.unlink()
+
+
+class TestProtoMarkersIgnoreStrings:
+    """Markers come from comment nodes, never from string literal contents."""
+
+    @pytest.fixture
+    def extractor(self):
+        return ProtoExtractor()
+
+    def test_marker_extraction_with_marker_shaped_strings(self, extractor, tmp_path):
+        target = tmp_path / "strings.proto"
+        target.write_text(
+            'syntax = "proto3";\n'
+            "\n"
+            "//@@start fields\n"
+            "message M {\n"
+            '  string a = 1 [(doc) = "//@@end fields"];\n'
+            "  string b = 2;\n"
+            "}\n"
+            "//@@end fields\n"
+        )
+
+        text, start, end = extractor.extract_marker(target, "fields")
+
+        assert (start, end) == (4, 7)
+        assert "string b = 2;" in text
+
+    def test_message_marker_via_comment_nodes(self, extractor, tmp_path):
+        target = tmp_path / "msg_marker.proto"
+        target.write_text(
+            'syntax = "proto3";\n'
+            "\n"
+            "message M {\n"
+            "  //@@start core\n"
+            "  string a = 1;\n"
+            "  //@@end core\n"
+            "  string b = 2;\n"
+            "}\n"
+        )
+
+        text, start, end = extractor.extract_message_marker(target, "M", "core")
+
+        assert (start, end) == (5, 5)
+        assert text.strip() == "string a = 1;"

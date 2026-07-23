@@ -129,7 +129,7 @@ def _show_params_table():
     table.add_row("  function_macro=", "Extract function defined by macro")
     table.add_row("  macro_definition=", "Extract macro definition (#define)")
     table.add_row("  message=", "Extract a message definition (protobuf)")
-    table.add_row("  enum=", "Extract an enum definition (protobuf)")
+    table.add_row("  enum=", "Extract an enum definition (protobuf, C++, TypeScript, Java, Rust)")
     table.add_row("  service=", "Extract a service definition (protobuf)")
     table.add_row("  marker=", "Extract between comment markers")
     table.add_row("  lines=", "Extract specific line range")

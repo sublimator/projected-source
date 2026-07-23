@@ -8,9 +8,8 @@ works on any platform with a C compiler — no prebuilt binary is bundled.
 """
 
 import logging
-import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import tree_sitter_proto
 from tree_sitter import Language, Node, Parser
@@ -91,48 +90,9 @@ class ProtoExtractor(BaseExtractor):
         text = node.text.decode("utf8") if node.text else ""
         return text, node.start_point.row + 1, node.end_point.row + 1
 
-    def extract_marker(self, file_path: Path, marker_name: str) -> Tuple[str, int, int]:
-        """
-        Extract content between marker comments.
-
-        Markers use the syntax:
-            //@@start marker-name
-            ... content ...
-            //@@end marker-name
-
-        Args:
-            file_path: Path to the .proto file
-            marker_name: Name of the marker
-
-        Returns:
-            Tuple of (code_text, start_line, end_line)
-        """
-        content = file_path.read_text()
-        lines = content.splitlines()
-
-        start_pattern = re.compile(rf"^\s*//@@start\s+{re.escape(marker_name)}\s*$")
-        end_pattern = re.compile(rf"^\s*//@@end\s+{re.escape(marker_name)}\s*$")
-
-        start_line = None
-        end_line = None
-
-        for i, line in enumerate(lines):
-            if start_pattern.match(line):
-                start_line = i + 1  # 1-indexed
-            elif end_pattern.match(line) and start_line is not None:
-                end_line = i + 1
-                break
-
-        if start_line is None:
-            raise ValueError(f"Marker '//@@start {marker_name}' not found in {file_path}")
-        if end_line is None:
-            raise ValueError(f"Marker '//@@end {marker_name}' not found in {file_path}")
-
-        # Extract lines between markers (exclusive of marker lines)
-        extracted_lines = lines[start_line : end_line - 1]
-        text = "\n".join(extracted_lines)
-
-        return text, start_line + 1, end_line - 1
+    # extract_marker and find_markers_in_file are inherited from
+    # BaseExtractor: the grammar exposes (comment) nodes, so markers are
+    # found via tree-sitter and never inside string literals.
 
     def extract_message_marker(self, file_path: Path, message_name: str, marker_name: str) -> Tuple[str, int, int]:
         """
@@ -197,37 +157,19 @@ class ProtoExtractor(BaseExtractor):
     def _extract_marker_from_node(
         self, file_path: Path, node: Node, marker_name: str, context: str
     ) -> Tuple[str, int, int]:
-        """Extract marker content from within a node."""
-        text = node.text.decode("utf8") if node.text else ""
-        lines = text.splitlines()
-        node_start_line = node.start_point.row + 1
+        """Extract marker content from within a node's subtree.
 
-        start_pattern = re.compile(rf"^\s*//@@start\s+{re.escape(marker_name)}\s*$")
-        end_pattern = re.compile(rf"^\s*//@@end\s+{re.escape(marker_name)}\s*$")
+        Uses the tree-sitter comment scan, so marker-shaped lines inside
+        string literals are never mistaken for markers. Node positions are
+        absolute, so the returned lines need no rebasing.
+        """
+        markers = self.find_markers_in_node(node)
+        if marker_name not in markers:
+            available = ", ".join(markers.keys()) if markers else "none"
+            raise ValueError(f"Marker '{marker_name}' not found in {context}. Available: {available}")
 
-        start_idx = None
-        end_idx = None
-
-        for i, line in enumerate(lines):
-            if start_pattern.match(line):
-                start_idx = i
-            elif end_pattern.match(line) and start_idx is not None:
-                end_idx = i
-                break
-
-        if start_idx is None:
-            raise ValueError(f"Marker '//@@start {marker_name}' not found in {context}")
-        if end_idx is None:
-            raise ValueError(f"Marker '//@@end {marker_name}' not found in {context}")
-
-        # Extract lines between markers (exclusive)
-        extracted_lines = lines[start_idx + 1 : end_idx]
-        extracted_text = "\n".join(extracted_lines)
-
-        start_line = node_start_line + start_idx + 1
-        end_line = node_start_line + end_idx - 1
-
-        return extracted_text, start_line, end_line
+        start_line, end_line = markers[marker_name]
+        return self.extract_lines(file_path, start_line, end_line)
 
     def list_symbols(self, file_path: Path) -> List[dict]:
         """List all extractable symbols in a proto file."""
@@ -294,33 +236,3 @@ class ProtoExtractor(BaseExtractor):
 
         return symbols
 
-    def find_markers_in_file(self, file_path: Path) -> Dict[str, Tuple[int, int]]:
-        """
-        Find all markers in a proto file.
-
-        Returns:
-            Dict mapping marker names to (start_line, end_line) tuples
-        """
-        content = file_path.read_text()
-        lines = content.splitlines()
-
-        markers: Dict[str, Tuple[int, int]] = {}
-        start_pattern = re.compile(r"^\s*//@@start\s+([\w-]+)\s*$")
-        end_pattern = re.compile(r"^\s*//@@end\s+([\w-]+)\s*$")
-
-        open_markers: Dict[str, int] = {}
-
-        for i, line in enumerate(lines):
-            start_match = start_pattern.match(line)
-            if start_match:
-                name = start_match.group(1)
-                open_markers[name] = i + 2  # line after the marker (1-indexed)
-
-            end_match = end_pattern.match(line)
-            if end_match:
-                name = end_match.group(1)
-                if name in open_markers:
-                    markers[name] = (open_markers[name], i)  # line before the marker
-                    del open_markers[name]
-
-        return markers

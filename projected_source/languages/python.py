@@ -6,10 +6,12 @@ Supports dotted paths for nested lookups (e.g., 'MyClass.my_method').
 """
 
 import ast
+import io
 import logging
 import re
+import tokenize
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from ..core.extractor import BaseExtractor
 
@@ -118,9 +120,15 @@ class PythonExtractor(BaseExtractor):
         return self.extract_lines(file_path, start_line, end_line)
 
     def find_markers_in_file(self, file_path: Path) -> Dict[str, Tuple[int, int]]:
-        """Find all #@@start / #@@end markers in a Python file."""
+        """Find all #@@start / #@@end markers in a Python file.
+
+        Only standalone comment lines count. Matching raw lines would also
+        hit marker-shaped lines inside string literals (truncating real
+        markers), so candidate lines are confirmed as comments via tokenize.
+        """
         content = file_path.read_text()
         lines = content.splitlines()
+        comment_lines = self._standalone_comment_lines(content)
 
         markers: Dict[str, Tuple[int, int]] = {}
         start_pattern = re.compile(r"^\s*#@@start\s+([\w-]+)\s*$")
@@ -129,6 +137,8 @@ class PythonExtractor(BaseExtractor):
         open_markers: Dict[str, int] = {}
 
         for i, line in enumerate(lines):
+            if comment_lines is not None and i + 1 not in comment_lines:
+                continue
             start_match = start_pattern.match(line)
             if start_match:
                 name = start_match.group(1)
@@ -142,6 +152,22 @@ class PythonExtractor(BaseExtractor):
                     del open_markers[name]
 
         return markers
+
+    @staticmethod
+    def _standalone_comment_lines(content: str) -> Optional[Set[int]]:
+        """1-based line numbers whose only content is a comment.
+
+        Returns None when the file cannot be tokenized, in which case the
+        caller falls back to matching raw lines.
+        """
+        try:
+            comment_lines: Set[int] = set()
+            for tok in tokenize.generate_tokens(io.StringIO(content).readline):
+                if tok.type == tokenize.COMMENT and tok.line[: tok.start[1]].strip() == "":
+                    comment_lines.add(tok.start[0])
+            return comment_lines
+        except (tokenize.TokenError, SyntaxError):
+            return None
 
     def list_symbols(self, file_path: Path) -> List[dict]:
         """List all extractable symbols in a Python file."""
@@ -291,6 +317,15 @@ class PythonExtractor(BaseExtractor):
         """Build a function signature string from AST."""
         args = func_node.args
         parts = []
+
+        # Positional-only args (before the '/' separator)
+        for arg in args.posonlyargs:
+            name = arg.arg
+            if arg.annotation:
+                name += f": {ast.unparse(arg.annotation)}"
+            parts.append(name)
+        if args.posonlyargs:
+            parts.append("/")
 
         # Regular args
         for arg in args.args:

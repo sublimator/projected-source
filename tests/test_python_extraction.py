@@ -420,3 +420,77 @@ class TestExtractorRegistration:
         from projected_source.languages import get_extractor
         ext = get_extractor(Path("test.pyi"))
         assert isinstance(ext, PythonExtractor)
+
+
+class TestPositionalOnlySignatures:
+    """Signatures must include positional-only params and the '/' marker."""
+
+    def _signatures(self, extractor, tmp_path, source):
+        target = tmp_path / "posonly.py"
+        target.write_text(source)
+        return {s["name"]: s.get("signature") for s in extractor.list_symbols(target)}
+
+    def test_posonly_params_included(self, extractor, tmp_path):
+        sigs = self._signatures(
+            extractor,
+            tmp_path,
+            "def f(a, b, /, c):\n    pass\n\n"
+            "def g(a, /):\n    pass\n\n"
+            "def h(a, b, /, c, *, d):\n    pass\n",
+        )
+        assert sigs["f"] == "(a, b, /, c)"
+        assert sigs["g"] == "(a, /)"
+        assert sigs["h"] == "(a, b, /, c, *, d)"
+
+    def test_annotated_posonly_param(self, extractor, tmp_path):
+        sigs = self._signatures(
+            extractor, tmp_path, "def f(a: int, /, b: str) -> bool:\n    return True\n"
+        )
+        assert sigs["f"] == "(a: int, /, b: str) -> bool"
+
+
+class TestMarkersIgnoreStringLiterals:
+    """Marker-shaped lines inside string literals are not markers."""
+
+    def test_marker_not_truncated_by_string_contents(self, extractor, tmp_path):
+        target = tmp_path / "str_marker.py"
+        target.write_text(
+            "#@@start region\n"
+            'config = """\n'
+            "#@@end region\n"
+            "still inside the string\n"
+            '"""\n'
+            "important_code = 42\n"
+            "#@@end region\n"
+        )
+
+        text, start, end = extractor.extract_marker(target, "region")
+
+        assert start == 2
+        assert end == 6
+        assert "important_code = 42" in text
+
+    def test_marker_shaped_string_does_not_open_marker(self, extractor, tmp_path):
+        target = tmp_path / "fake_start.py"
+        target.write_text(
+            's = """\n'
+            "#@@start ghost\n"
+            '"""\n'
+            "x = 1\n"
+        )
+
+        assert extractor.find_markers_in_file(target) == {}
+
+    def test_untokenizable_file_falls_back_to_raw_scan(self, extractor, tmp_path):
+        # Unterminated string literal — tokenize fails, raw scan still
+        # finds the (valid, comment-style) marker lines.
+        target = tmp_path / "broken.py"
+        target.write_text(
+            "#@@start region\n"
+            "value = 1\n"
+            "#@@end region\n"
+            's = "unterminated\n'
+        )
+
+        text, start, end = extractor.extract_marker(target, "region")
+        assert "value = 1" in text

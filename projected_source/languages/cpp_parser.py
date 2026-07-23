@@ -812,7 +812,7 @@ class SimpleCppParser:
                         {
                             "name": qualified,
                             "kind": kind_map[node.type],
-                            "param": "struct",
+                            "param": "enum" if node.type == "enum_specifier" else "struct",
                             "line": node.start_point.row + 1,
                         }
                     )
