@@ -67,9 +67,11 @@ class ChangesSet:
 
         changes = cls()
 
-        # Get diff with file names and line numbers
+        # Get diff with file names and line numbers. quotePath=false keeps
+        # non-ASCII paths as raw UTF-8 instead of C-quoted octal escapes,
+        # so '+++ b/<path>' parsing sees the real path.
         result = subprocess.run(
-            ["git", "diff", diff_range, "--unified=3"],
+            ["git", "-c", "core.quotePath=false", "diff", diff_range, "--unified=3"],
             capture_output=True,
             cwd=repo_path,
             text=True,
@@ -143,9 +145,14 @@ class ChangesSet:
             if line.startswith("+++ b/"):
                 file_path = line[6:]  # Strip "+++ b/"
                 current_file = repo_path / file_path
-            # Deleted-file sentinel: '+++ /dev/null' — skip hunk lines so we
-            # don't spuriously record additions against the previous file.
-            elif line.startswith("+++ ") and "/dev/null" in line:
+            # C-quoted header: +++ "b/path with \303\251scapes". Git quotes
+            # paths with control characters even under quotePath=false.
+            elif line.startswith('+++ "b/'):
+                current_file = repo_path / self._unquote_git_path(line[4:])
+            # Anything else ('+++ /dev/null' for a deleted file, or an
+            # unrecognized header form) must never attribute the following
+            # hunk lines to the previous file.
+            elif line.startswith("+++ "):
                 current_file = None
 
             # Hunk header: @@ -old_start,old_count +new_start,new_count @@
@@ -174,6 +181,46 @@ class ChangesSet:
             # Deleted line - doesn't increment new line counter
             elif line.startswith("-") and not line.startswith("---"):
                 pass  # Deletion - surrounding context already captured
+
+    _GIT_PATH_ESCAPES = {
+        "a": "\a",
+        "b": "\b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+        "v": "\v",
+        '"': '"',
+        "\\": "\\",
+    }
+
+    @classmethod
+    def _unquote_git_path(cls, quoted: str) -> str:
+        """Decode a git C-style quoted path: '"b/na\\303\\257ve.h"' -> 'b/naïve.h'.
+
+        Octal escapes are raw bytes of the UTF-8 encoding, so unescape to
+        bytes first and decode at the end.
+        """
+        inner = quoted.strip()
+        if inner.startswith('"') and inner.endswith('"'):
+            inner = inner[1:-1]
+        out = bytearray()
+        i = 0
+        while i < len(inner):
+            ch = inner[i]
+            if ch == "\\" and i + 1 < len(inner):
+                nxt = inner[i + 1]
+                if nxt.isdigit():
+                    out.append(int(inner[i + 1 : i + 4], 8))
+                    i += 4
+                    continue
+                out.extend(cls._GIT_PATH_ESCAPES.get(nxt, nxt).encode("utf8"))
+                i += 2
+                continue
+            out.extend(ch.encode("utf8"))
+            i += 1
+        path = out.decode("utf8", errors="surrogateescape")
+        return path[2:] if path.startswith("b/") else path
 
     def add(self, file_path: Path, start: int, end: int) -> None:
         """

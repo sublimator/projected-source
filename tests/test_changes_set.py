@@ -519,6 +519,78 @@ int helper() {
                 # Any remaining regions shouldn't be in 5-8
                 assert not (region.start_line >= 5 and region.end_line <= 8)
 
+    def test_from_diff_non_ascii_path_not_misattributed(self, temp_git_repo):
+        """Git C-quotes non-ASCII paths ('+++ "b/..."') by default; those
+        hunks must land on the right file, not the previous header's file."""
+        ascii_file = temp_git_repo / "aaa.cpp"
+        ascii_file.write_text("int a() { return 1; }\n")
+        unicode_file = temp_git_repo / "bébé.cpp"
+        unicode_file.write_text("int b() { return 1; }\n")
+        self.subprocess.run(["git", "add", "-A"], cwd=temp_git_repo, capture_output=True)
+        self.subprocess.run(
+            ["git", "commit", "-m", "add files"], cwd=temp_git_repo, capture_output=True
+        )
+
+        ascii_file.write_text("int a() { return 2; }\n")
+        unicode_file.write_text("int b() { return 2; }\nint c() { return 3; }\n")
+        self.subprocess.run(["git", "add", "-A"], cwd=temp_git_repo, capture_output=True)
+        self.subprocess.run(
+            ["git", "commit", "-m", "change both"], cwd=temp_git_repo, capture_output=True
+        )
+
+        cs = ChangesSet.from_diff(base="HEAD~1", repo_path=temp_git_repo)
+
+        by_file = {
+            r.file_path.name: (r.start_line, r.end_line) for r in cs.uncovered()
+        }
+        assert by_file == {"aaa.cpp": (1, 1), "bébé.cpp": (1, 2)}
+
+    def test_parse_diff_decodes_c_quoted_header(self):
+        """Even a C-quoted header (control chars stay quoted regardless of
+        quotePath) must resolve to the real path, octal escapes decoded."""
+        cs = ChangesSet()
+        diff = (
+            'diff --git "a/b\\303\\251b\\303\\251.cpp" "b/b\\303\\251b\\303\\251.cpp"\n'
+            '--- "a/b\\303\\251b\\303\\251.cpp"\n'
+            '+++ "b/b\\303\\251b\\303\\251.cpp"\n'
+            "@@ -1 +1,2 @@\n"
+            "-int b() { return 1; }\n"
+            "+int b() { return 2; }\n"
+            "+int c() { return 3; }\n"
+        )
+        cs._parse_diff(diff, Path("/repo"))
+
+        regions = cs.uncovered()
+        assert len(regions) == 1
+        assert regions[0].file_path == Path("/repo/bébé.cpp")
+        assert (regions[0].start_line, regions[0].end_line) == (1, 2)
+
+    def test_parse_diff_unrecognized_header_claims_nothing(self):
+        """An unparseable '+++' header must not leave the previous file
+        active for the following hunk."""
+        cs = ChangesSet()
+        diff = (
+            "diff --git a/first.cpp b/first.cpp\n"
+            "--- a/first.cpp\n"
+            "+++ b/first.cpp\n"
+            "@@ -1 +1 @@\n"
+            "-int a = 1;\n"
+            "+int a = 2;\n"
+            "diff --git a/strange b/strange\n"
+            "--- a/strange\n"
+            "+++ some-unrecognized-form\n"
+            "@@ -1 +1,2 @@\n"
+            "-x\n"
+            "+y\n"
+            "+z\n"
+        )
+        cs._parse_diff(diff, Path("/repo"))
+
+        regions = cs.uncovered()
+        assert [(r.file_path.name, r.start_line, r.end_line) for r in regions] == [
+            ("first.cpp", 1, 1)
+        ]
+
     def test_parse_diff_with_deleted_file_skips_dev_null(self, temp_git_repo):
         """A '+++ /dev/null' header (deleted file) must not record adds against the previous file."""
         # Name files so the kept (modified) file sorts BEFORE the deleted file
