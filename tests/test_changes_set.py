@@ -591,6 +591,52 @@ int helper() {
             ("first.cpp", 1, 1)
         ]
 
+    def test_parse_diff_header_lookalike_body_lines(self):
+        """Added source lines that render as '+++ ...' diff lines are hunk
+        body (bounded by the @@ counts), not file headers — they must be
+        recorded, not dropped or attributed to a phantom file."""
+        cs = ChangesSet()
+        diff = (
+            "diff --git a/doc.md b/doc.md\n"
+            "--- a/doc.md\n"
+            "+++ b/doc.md\n"
+            "@@ -1 +1,6 @@\n"
+            "-keep\n"
+            "+keep2\n"
+            "+++ b/evil.py\n"
+            "+++ generic\n"
+            "+normal\n"
+            "+last\n"
+            "+end\n"
+        )
+        cs._parse_diff(diff, Path("/repo"))
+
+        regions = {r.file_path.name: (r.start_line, r.end_line) for r in cs.uncovered()}
+        assert regions == {"doc.md": (1, 6)}
+
+    def test_from_diff_header_lookalike_content(self, temp_git_repo):
+        """Real git diff of content containing '++ b/...' lines: all added
+        lines stay required, no phantom file appears."""
+        test_file = temp_git_repo / "test.cpp"
+        test_file.write_text("line1\n")
+        self.subprocess.run(["git", "add", "-A"], cwd=temp_git_repo, capture_output=True)
+        self.subprocess.run(
+            ["git", "commit", "-m", "one line"], cwd=temp_git_repo, capture_output=True
+        )
+
+        test_file.write_text("line1\n++ b/evil.py\n++ generic\nnormal\n")
+        self.subprocess.run(["git", "add", "-A"], cwd=temp_git_repo, capture_output=True)
+        self.subprocess.run(
+            ["git", "commit", "-m", "append tricky lines"],
+            cwd=temp_git_repo,
+            capture_output=True,
+        )
+
+        cs = ChangesSet.from_diff(base="HEAD~1", repo_path=temp_git_repo)
+
+        regions = {r.file_path.name: (r.start_line, r.end_line) for r in cs.uncovered()}
+        assert regions == {"test.cpp": (2, 4)}
+
     def test_parse_diff_with_deleted_file_skips_dev_null(self, temp_git_repo):
         """A '+++ /dev/null' header (deleted file) must not record adds against the previous file."""
         # Name files so the kept (modified) file sorts BEFORE the deleted file

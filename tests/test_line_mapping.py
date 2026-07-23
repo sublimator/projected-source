@@ -14,6 +14,7 @@ import pytest
 
 from projected_source.core.github import (
     GitHubIntegration,
+    build_line_mapping,
     map_line_to_committed,
     parse_diff_hunks,
 )
@@ -372,3 +373,48 @@ class TestEndToEndPermalink:
 
         # Display should show committed line numbers (default behavior)
         assert ":11-13" in permalink or "test.cpp:11-13" in permalink
+
+
+class TestBuildLineMappingHeaderLookalikes:
+    """Hunk bodies are bounded by @@ counts; body lines that look like diff
+    headers (documenting a patch inside a file) must map like any content."""
+
+    def test_embedded_diff_snippet_does_not_shift_mapping(self):
+        # Working tree inserts a fenced diff (containing its own +++/---/@@
+        # lines) above target_line; committed line of target_line is 2.
+        diff = (
+            "--- a/guide.md\n"
+            "+++ b/guide.md\n"
+            "@@ -1,2 +1,8 @@\n"
+            " intro\n"
+            "+```diff\n"
+            "+--- a/src/app.py\n"
+            "++++ b/src/app.py\n"
+            "+@@ -1 +1 @@\n"
+            "+-old\n"
+            "++new\n"
+            " target_line\n"
+        )
+        mapping = build_line_mapping(diff)
+
+        assert mapping[1] == 1
+        assert mapping[8] == 2
+        # The inserted snippet lines are additions.
+        assert all(mapping[n] is None for n in range(2, 8))
+
+    def test_hunk_header_lookalike_inside_body_is_not_a_header(self):
+        # '+@@ -1 +1 @@' is an added line whose content is a hunk header;
+        # it must not reset the line counters.
+        diff = (
+            "--- a/f.md\n"
+            "+++ b/f.md\n"
+            "@@ -1,2 +1,3 @@\n"
+            " first\n"
+            "+@@ -1 +1 @@\n"
+            " second\n"
+        )
+        mapping = build_line_mapping(diff)
+
+        assert mapping[1] == 1
+        assert mapping[2] is None
+        assert mapping[3] == 2

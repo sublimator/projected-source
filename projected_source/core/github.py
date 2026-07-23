@@ -47,38 +47,43 @@ def build_line_mapping(diff_output: str) -> Dict[int, Optional[int]]:
 
     old_line = 0
     new_line = 0
-    in_hunk = False
+    old_remaining = 0
+    new_remaining = 0
 
     for line in diff_output.split("\n"):
-        # Check for hunk header
-        match = hunk_pattern.match(line)
-        if match:
-            old_line = int(match.group(1))
-            new_line = int(match.group(3))
-            in_hunk = True
+        if old_remaining <= 0 and new_remaining <= 0:
+            # Between hunks: only a hunk header matters here.
+            match = hunk_pattern.match(line)
+            if match:
+                old_line = int(match.group(1))
+                new_line = int(match.group(3))
+                old_remaining = int(match.group(2)) if match.group(2) else 1
+                new_remaining = int(match.group(4)) if match.group(4) else 1
             continue
 
-        if not in_hunk:
+        # Inside a hunk body, bounded by the header's counts: classify by
+        # first character only. Source content that looks like a diff
+        # header (documenting a patch puts '++++ b/x' in the body) is a
+        # body line, not a header.
+        if line.startswith("\\"):
+            # "\ No newline at end of file" - meta, consumes nothing
             continue
-
-        if line.startswith("+++") or line.startswith("---"):
-            continue
-
         if line.startswith("+"):
             # Added line - exists in new file only
             mapping[new_line] = None
             new_line += 1
+            new_remaining -= 1
         elif line.startswith("-"):
             # Removed line - exists in old file only
             old_line += 1
-        elif line.startswith(" ") or line == "":
-            # Context line - exists in both
+            old_remaining -= 1
+        else:
+            # Context line - exists in both (may be '' if whitespace-stripped)
             mapping[new_line] = old_line
             old_line += 1
             new_line += 1
-        elif line.startswith("\\"):
-            # "\ No newline at end of file" - ignore
-            continue
+            old_remaining -= 1
+            new_remaining -= 1
 
     return mapping
 

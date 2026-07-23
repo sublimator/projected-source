@@ -368,3 +368,62 @@ class TestCppEnumSelector:
         assert not result.ok
         assert "not an enum" in result.errors[0].message
         assert "struct=" in result.errors[0].message
+
+
+class TestIgnoreChangesCoordinates:
+    """ignore_changes() must use the same coordinate discipline as code()
+    coverage: dirty working-tree extractions translate to committed lines,
+    and ref= claims only at the validated range's destination commit."""
+
+    def _repo_with_two_changes(self, repo):
+        """HEAD changes foo (line 2) and bar (line 4); returns shas."""
+        source = repo / "f.py"
+        source.write_text("def foo():\n    return 1\ndef bar():\n    return 2\n")
+        sha_a = _commit_all(repo, "base")
+        source.write_text("def foo():\n    return 10\ndef bar():\n    return 20\n")
+        sha_b = _commit_all(repo, "change both")
+        return sha_a, sha_b
+
+    def test_dirty_file_ignore_translates_to_committed_lines(self, repo, tmp_path):
+        self._repo_with_two_changes(repo)
+        source = repo / "f.py"
+        # Uncommitted lines above foo shift its working-tree position.
+        source.write_text("# note\n# note\n" + source.read_text())
+
+        changes = ChangesSet.from_diff(base="HEAD~1", repo_path=repo)
+        assert _uncovered_ranges(changes) == [(2, 2), (4, 4)]
+
+        _render(
+            repo,
+            tmp_path,
+            "{{ ignore_changes('f.py', function='foo') }}\n",
+            changes,
+        )
+        # foo's committed change (line 2) is exempted; bar's stays.
+        assert _uncovered_ranges(changes) == [(4, 4)]
+
+    def test_ref_at_destination_claims(self, repo, tmp_path):
+        _, sha_b = self._repo_with_two_changes(repo)
+
+        changes = ChangesSet.from_diff(base="HEAD~1", repo_path=repo)
+        _render(
+            repo,
+            tmp_path,
+            "{{ ignore_changes('f.py', function='foo', ref='%s') }}\n" % sha_b,
+            changes,
+        )
+        assert _uncovered_ranges(changes) == [(4, 4)]
+
+    def test_ref_elsewhere_claims_nothing(self, repo, tmp_path):
+        sha_a, _ = self._repo_with_two_changes(repo)
+
+        changes = ChangesSet.from_diff(base="HEAD~1", repo_path=repo)
+        _render(
+            repo,
+            tmp_path,
+            "{{ ignore_changes('f.py', function='foo', ref='%s') }}\n" % sha_a,
+            changes,
+        )
+        # A pin at a non-destination commit is a different coordinate
+        # space — it must not consume anything.
+        assert _uncovered_ranges(changes) == [(2, 2), (4, 4)]

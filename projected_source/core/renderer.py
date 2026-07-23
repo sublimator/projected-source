@@ -750,8 +750,23 @@ class TemplateRenderer:
             elif lines:
                 start_line, end_line = lines
 
-            self.changes_set.subtract(resolved_path, start_line, end_line)
-            logger.info(f"Ignoring changes: {file_path}:{start_line}-{end_line}")
+            # Same coordinate discipline as code() coverage: working-tree
+            # extractions translate to committed lines; pinned extractions
+            # claim only when the ref is the validated range's destination.
+            if active_ref:
+                if self._ref_is_changes_target(active_ref):
+                    self.changes_set.subtract(resolved_path, start_line, end_line)
+                    logger.info(f"Ignoring changes: {file_path}:{start_line}-{end_line} @ {active_ref}")
+                else:
+                    logger.warning(
+                        f"ignore_changes ref='{active_ref}' is not the validated range's "
+                        f"destination commit; not claiming coverage for {file_path}"
+                    )
+            else:
+                committed_start = self.github.map_to_committed_line(resolved_path, start_line)
+                committed_end = self.github.map_to_committed_line(resolved_path, end_line)
+                self.changes_set.subtract(resolved_path, committed_start, committed_end)
+                logger.info(f"Ignoring changes: {file_path}:{committed_start}-{committed_end}")
 
         except Exception as e:
             logger.warning(f"Failed to extract region for ignore_changes: {e}")

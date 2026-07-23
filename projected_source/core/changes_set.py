@@ -11,6 +11,7 @@ change — requiring them would force documentation to match the shape of the
 unified diff rather than the edit itself.
 """
 
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -128,6 +129,8 @@ class ChangesSet:
         # Fall back to parent commit
         return "HEAD~1"
 
+    _HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
     def _parse_diff(self, diff_output: str, repo_path: Path) -> None:
         """Parse unified diff output and populate regions.
 
@@ -136,11 +139,38 @@ class ChangesSet:
         Deletion-only hunks therefore produce no obligation: a deletion has
         no new-version line to anchor to, and proxying it through unchanged
         neighbors would make coverage depend on diff presentation.
+
+        Hunk bodies are bounded by the @@ header's line counts. Inside a
+        body, lines are classified only by their first character — source
+        content that *looks* like a header (an added '++ b/x' renders as
+        the diff line '+++ b/x') must not switch files or get dropped.
         """
         current_file: Optional[Path] = None
         current_new_line = 0
+        old_remaining = 0
+        new_remaining = 0
 
         for line in diff_output.splitlines():
+            if old_remaining > 0 or new_remaining > 0:
+                # Inside a hunk body.
+                if line.startswith("\\"):
+                    continue  # '\ No newline at end of file' — meta line
+                if line.startswith("+"):
+                    # Added/replacement line - needs coverage
+                    if current_file:
+                        self.add(current_file, current_new_line, current_new_line)
+                    current_new_line += 1
+                    new_remaining -= 1
+                elif line.startswith("-"):
+                    # Deleted line - doesn't advance the new-file cursor
+                    old_remaining -= 1
+                else:
+                    # Unchanged context line - advances position only
+                    current_new_line += 1
+                    old_remaining -= 1
+                    new_remaining -= 1
+                continue
+
             # New file header: +++ b/path/to/file
             if line.startswith("+++ b/"):
                 file_path = line[6:]  # Strip "+++ b/"
@@ -156,31 +186,12 @@ class ChangesSet:
                 current_file = None
 
             # Hunk header: @@ -old_start,old_count +new_start,new_count @@
-            elif line.startswith("@@"):
-                # Parse new file position
-                parts = line.split()
-                if len(parts) >= 3:
-                    new_range = parts[2]  # e.g., "+10,5" or "+10"
-                    if new_range.startswith("+"):
-                        new_range = new_range[1:]
-                        if "," in new_range:
-                            current_new_line = int(new_range.split(",")[0])
-                        else:
-                            current_new_line = int(new_range)
-
-            # Added or context line - track position
-            elif current_file and not line.startswith("-"):
-                if line.startswith("+"):
-                    # Added/replacement line - needs coverage
-                    self.add(current_file, current_new_line, current_new_line)
-                    current_new_line += 1
-                elif line.startswith(" "):
-                    # Unchanged context line - advances position only
-                    current_new_line += 1
-
-            # Deleted line - doesn't increment new line counter
-            elif line.startswith("-") and not line.startswith("---"):
-                pass  # Deletion - surrounding context already captured
+            else:
+                match = self._HUNK_HEADER_RE.match(line)
+                if match:
+                    current_new_line = int(match.group(3))
+                    old_remaining = int(match.group(2)) if match.group(2) else 1
+                    new_remaining = int(match.group(4)) if match.group(4) else 1
 
     _GIT_PATH_ESCAPES = {
         "a": "\a",
