@@ -4,6 +4,11 @@ ChangesSet - Track and validate documentation coverage of code changes.
 Provides a set-like data structure for managing changed code regions,
 with support for merging overlapping regions and tracking which regions
 have been "claimed" by documentation.
+
+Only actual added/replacement lines become required coverage. The unchanged
+context lines Git prints around each hunk are presentation, not part of the
+change — requiring them would force documentation to match the shape of the
+unified diff rather than the edit itself.
 """
 
 import subprocess
@@ -36,6 +41,10 @@ class ChangesSet:
     def __init__(self):
         # Dict[Path, List[Tuple[start, end]]] - sorted, non-overlapping regions
         self._regions: Dict[Path, List[Tuple[int, int]]] = {}
+        # Destination commit of the validated range (set by from_diff).
+        # Extractions pinned with ref= at exactly this commit share its line
+        # coordinate space, so they may claim coverage directly.
+        self.target_sha: Optional[str] = None
 
     @classmethod
     def from_diff(cls, base: Optional[str] = None, repo_path: Optional[Path] = None) -> "ChangesSet":
@@ -70,7 +79,22 @@ class ChangesSet:
             raise RuntimeError(f"git diff failed: {result.stderr}")
 
         changes._parse_diff(result.stdout, repo_path)
+        target = diff_range.rsplit("..", 1)[-1].lstrip(".") or "HEAD"
+        changes.target_sha = cls._resolve_commit(target, repo_path)
         return changes
+
+    @staticmethod
+    def _resolve_commit(ref: str, repo_path: Path) -> Optional[str]:
+        """Resolve a ref to a full commit SHA, or None if it doesn't resolve."""
+        result = subprocess.run(
+            ["git", "rev-parse", f"{ref}^{{commit}}"],
+            capture_output=True,
+            cwd=repo_path,
+            text=True,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
 
     @staticmethod
     def detect_base(repo_path: Path) -> str:
@@ -103,7 +127,14 @@ class ChangesSet:
         return "HEAD~1"
 
     def _parse_diff(self, diff_output: str, repo_path: Path) -> None:
-        """Parse unified diff output and populate regions."""
+        """Parse unified diff output and populate regions.
+
+        Only '+' lines become required coverage. Unchanged hunk context
+        advances the new-file cursor without creating an obligation.
+        Deletion-only hunks therefore produce no obligation: a deletion has
+        no new-version line to anchor to, and proxying it through unchanged
+        neighbors would make coverage depend on diff presentation.
+        """
         current_file: Optional[Path] = None
         current_new_line = 0
 
@@ -132,15 +163,12 @@ class ChangesSet:
 
             # Added or context line - track position
             elif current_file and not line.startswith("-"):
-                if line.startswith("+") or line.startswith(" "):
-                    # This line exists in the new version
-                    if line.startswith("+"):
-                        # Added line - definitely needs coverage
-                        self.add(current_file, current_new_line, current_new_line)
-                    elif line.startswith(" "):
-                        # Context line around a change - also needs coverage
-                        # (user chose "all changed" which includes context)
-                        self.add(current_file, current_new_line, current_new_line)
+                if line.startswith("+"):
+                    # Added/replacement line - needs coverage
+                    self.add(current_file, current_new_line, current_new_line)
+                    current_new_line += 1
+                elif line.startswith(" "):
+                    # Unchanged context line - advances position only
                     current_new_line += 1
 
             # Deleted line - doesn't increment new line counter

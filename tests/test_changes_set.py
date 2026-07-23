@@ -328,6 +328,102 @@ class TestChangesSetFromDiff:
         files = cs.files()
         assert any("test.cpp" in str(f) for f in files)
 
+    def test_from_diff_context_lines_not_required(self, temp_git_repo):
+        """Unchanged hunk context is diagnostic, never a coverage obligation."""
+        test_file = temp_git_repo / "test.cpp"
+
+        # Replace only the middle line; the surrounding lines become
+        # unified-diff context and must NOT be recorded as required.
+        test_file.write_text(
+            """int main() {
+    return 42;
+}
+"""
+        )
+        self.subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
+        self.subprocess.run(
+            ["git", "commit", "-m", "Change return value"],
+            cwd=temp_git_repo,
+            capture_output=True,
+        )
+
+        cs = ChangesSet.from_diff(base="HEAD~1", repo_path=temp_git_repo)
+
+        regions = cs.uncovered()
+        assert len(regions) == 1
+        assert regions[0].start_line == 2
+        assert regions[0].end_line == 2
+
+    def test_from_diff_deletion_only_hunk_no_obligation(self, temp_git_repo):
+        """A deletion-only hunk has no new-version line to require.
+
+        Deletions are not yet modeled; unchanged neighbors must not proxy
+        for them.
+        """
+        test_file = temp_git_repo / "test.cpp"
+        test_file.write_text(
+            """int main() {
+    int x = 1;
+    return 0;
+}
+"""
+        )
+        self.subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
+        self.subprocess.run(
+            ["git", "commit", "-m", "Add x"], cwd=temp_git_repo, capture_output=True
+        )
+
+        test_file.write_text(
+            """int main() {
+    return 0;
+}
+"""
+        )
+        self.subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
+        self.subprocess.run(
+            ["git", "commit", "-m", "Remove x"], cwd=temp_git_repo, capture_output=True
+        )
+
+        cs = ChangesSet.from_diff(base="HEAD~1", repo_path=temp_git_repo)
+        assert cs.is_complete()
+        assert cs.uncovered() == []
+
+    def test_from_diff_records_target_sha(self, temp_git_repo):
+        """from_diff() resolves and stores the destination commit of the range."""
+        test_file = temp_git_repo / "test.cpp"
+        test_file.write_text("int main() { return 1; }\n")
+        self.subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
+        self.subprocess.run(
+            ["git", "commit", "-m", "Change"], cwd=temp_git_repo, capture_output=True
+        )
+
+        head_sha = (
+            self.subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=temp_git_repo,
+                capture_output=True,
+                text=True,
+            )
+            .stdout.strip()
+        )
+        prev_sha = (
+            self.subprocess.run(
+                ["git", "rev-parse", "HEAD~1"],
+                cwd=temp_git_repo,
+                capture_output=True,
+                text=True,
+            )
+            .stdout.strip()
+        )
+
+        cs = ChangesSet.from_diff(base="HEAD~1", repo_path=temp_git_repo)
+        assert cs.target_sha == head_sha
+
+        cs_range = ChangesSet.from_diff(
+            base=f"{prev_sha}..{head_sha}", repo_path=temp_git_repo
+        )
+        assert cs_range.target_sha == head_sha
+
     def test_from_diff_on_feature_branch(self, temp_git_repo):
         """from_diff() works on a feature branch against main."""
         # Create a feature branch

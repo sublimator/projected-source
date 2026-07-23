@@ -87,6 +87,40 @@ projected-source render docs/ -V auto              # auto-detect base
 projected-source render docs/ -V auto --strict     # exit 1 if uncovered
 ```
 
+### Change validation (-V)
+
+`render -V <base> --strict` requires every **added or changed line** in the
+diff range to be acknowledged by the document — claimed by a `code()`
+extraction or an explicit `ignore_changes()`. What it does NOT require:
+
+- **Unchanged diff context** — the ~3 lines Git prints around each hunk are
+  shown in diagnostics but are never a coverage obligation.
+- **Marker delimiters as separate coverage** — a marker extraction claims its
+  `//@@start` / `//@@end` lines along with the body, so introducing a marker
+  together with the change it documents needs no `lines=` escape hatch.
+- **Enclosure context** — `enclosure_context` is presentation-only and never
+  changes the validation result.
+
+Deletion-only hunks are not yet modeled and produce no obligation.
+
+`ignore_changes()` exempts regions using the same selectors as `code()`:
+
+```jinja
+{{{{ ignore_changes('build/file.cmake') }}}}                  {{# whole file #}}
+{{{{ ignore_changes('src/file.cpp', function='helper') }}}}   {{# one symbol #}}
+{{{{ ignore_changes('src/file.cpp', marker='generated') }}}}  {{# marker + delimiters #}}
+```
+
+Prefer the narrowest exemption — whole-file `ignore_changes()` hides future
+changes in that file from validation.
+
+Extractions pinned with `ref=` claim coverage only when the ref is the
+destination commit of the validated range (e.g. `ref=B` with `-V A..B`);
+other refs live in a different coordinate space and claim nothing.
+
+Note: `render -V --strict` validates changed-line acknowledgement;
+`check --strict` validates rendered-artifact freshness. Different predicates.
+
 `--html` is only a final presentation transform. Template evaluation and
 source projection still produce Markdown first; `--no-html` remains the
 default. The generated HTML has embedded responsive styling and preserves raw
@@ -129,6 +163,7 @@ gh pr edit 123 --body-file .ai-docs/pr-description.md
 {{{{ code('src/file.cpp', function='processTransaction') }}}}
 {{{{ code('src/file.cpp', function='onMessage', signature='TMProposeSet') }}}}
 {{{{ code('src/file.h', struct='Config') }}}}
+{{{{ code('src/file.h', enum='State') }}}}           {{# C++ enum / enum class #}}
 {{{{ code('src/file.cpp', var='errorCodes') }}}}
 {{{{ code('src/file.cpp', marker='example-usage') }}}}
 {{{{ code('src/file.cpp', function='main', marker='init-section') }}}}

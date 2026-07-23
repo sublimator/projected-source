@@ -197,12 +197,13 @@ def _apply_header(header: str, rendered: str) -> str:
     "changes_base",
     default=None,
     metavar="BASE",
-    help="Validate changes are documented. BASE: commit/branch/range, or 'auto' to detect.",
+    help="Validate added/changed lines are documented. BASE: commit/branch/range, or 'auto' to detect.",
 )
 @click.option(
     "--strict",
     is_flag=True,
-    help="Exit with error code 1 if validation fails (use with -V)",
+    help="Exit 1 when added/changed lines remain unacknowledged (use with -V). "
+    "Distinct from 'check --strict', which validates rendered-artifact freshness.",
 )
 @click.option(
     "--commit",
@@ -275,6 +276,11 @@ def render(
         # Render against a specific commit/branch
         projected-source render docs/ --commit v1.0.0
         projected-source render docs/ -c origin/main
+
+    With -V, every added/changed line in the range must be claimed by a
+    code() extraction or an explicit ignore_changes(). Unchanged diff
+    context is shown around uncovered regions for diagnosis but is never
+    itself an obligation.
     """
     # Set up fixture collection if requested
     if collect_error_fixtures:
@@ -427,13 +433,21 @@ def render(
                         rel_path = abs_path
                     console.print(f"\n[cyan]━━━ {rel_path} ━━━[/cyan]")
 
-                    # Read file once, show each range
+                    # Read file once, show each range with surrounding
+                    # context. Context is diagnostic only — the obligation
+                    # is the uncovered lines themselves.
                     try:
                         lines = abs_path.read_text().splitlines()
                         for start, end in ranges:
                             console.print(f"[dim]{start}-{end}:[/dim]")
-                            for i in range(start - 1, min(end, len(lines))):
-                                console.print(f"  [dim]{i + 1:4}[/dim] {lines[i]}")
+                            context_start = max(1, start - 3)
+                            context_end = min(len(lines), end + 3)
+                            for line_no in range(context_start, context_end + 1):
+                                text = lines[line_no - 1]
+                                if start <= line_no <= end:
+                                    console.print(f"  [dim]{line_no:4}[/dim] {text}")
+                                else:
+                                    console.print(f"  [dim]{line_no:4} {text}[/dim]")
                     except Exception as e:
                         console.print(f"  [red]Could not read file: {e}[/red]")
 

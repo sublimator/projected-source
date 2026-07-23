@@ -157,6 +157,9 @@ class TemplateRenderer:
         # Failed code() extractions for the render in flight; reset per render.
         self._errors: List[CodeError] = []
 
+        # ref= strings already resolved to commit SHAs for coverage checks.
+        self._ref_sha_cache: Dict[str, Optional[str]] = {}
+
         # Create Jinja2 environment
         self.env = jinja2.Environment(
             loader=jinja2.FileSystemLoader(str(self.template_dir)),
@@ -215,7 +218,7 @@ class TemplateRenderer:
             signature: String to match against parameter types for overload disambiguation.
                        Use partial type names like "TMProposeSet" to select a specific overload.
             message: Message name to extract (protobuf)
-            enum: Enum name to extract (protobuf)
+            enum: Enum name to extract (protobuf, C++, TypeScript, Java, Rust)
             service: Service name to extract (protobuf)
             github: Include GitHub permalink (default: True)
             blame: Include git blame info (default: False)
@@ -535,20 +538,31 @@ class TemplateRenderer:
             display_path = self.repo_path / file_path if not Path(file_path).is_absolute() else Path(file_path)
 
             # Track this region as covered if we have a ChangesSet
-            if self.changes_set is not None and not active_ref:
-                # changes_set holds HEAD-relative line numbers (built from
-                # 'git diff base..HEAD'), but start_line/end_line came from
-                # the working tree. Translate before subtracting so uncommitted
-                # edits above the extracted region don't shift the wrong rows.
-                coverage_ranges = (
-                    [(segment_start, segment_end) for _, segment_start, segment_end in display_segments]
-                    if display_segments
-                    else [(start_line, end_line)]
-                )
-                for coverage_start, coverage_end in coverage_ranges:
+            if self.changes_set is not None:
+                # Coverage claims the extraction target itself. For markers
+                # that is the body plus its //@@ delimiter lines (introduced
+                # by the same edit they document) — never the enclosure
+                # head/tail, which is presentation only: enclosure_context
+                # must not change whether an edit counts as documented.
+                coverage_start, coverage_end = start_line, end_line
+                if marker:
+                    coverage_start, coverage_end = self._widen_to_marker_delimiters(
+                        resolved_path, coverage_start, coverage_end
+                    )
+                if not active_ref:
+                    # changes_set holds line numbers for the diff's destination
+                    # commit (HEAD), but the extraction came from the working
+                    # tree. Translate before subtracting so uncommitted edits
+                    # above the extracted region don't shift the wrong rows.
                     committed_start = self.github.map_to_committed_line(display_path, coverage_start)
                     committed_end = self.github.map_to_committed_line(display_path, coverage_end)
                     self.changes_set.subtract(display_path, committed_start, committed_end)
+                elif self._ref_is_changes_target(active_ref):
+                    # Pinned at the validated range's destination commit: the
+                    # extraction's coordinates are already in the same space
+                    # as the diff's new-version lines. Any other ref lives in
+                    # an unrelated coordinate space and claims nothing.
+                    self.changes_set.subtract(display_path, coverage_start, coverage_end)
 
             # Remap line numbers if requested (for sharing docs from dirty files)
             display_start = start_line
@@ -732,6 +746,7 @@ class TemplateRenderer:
                 _, start_line, end_line = extractor.extract_service(extract_path, service)
             elif marker:
                 _, start_line, end_line = extractor.extract_marker(extract_path, marker)
+                start_line, end_line = self._widen_to_marker_delimiters(extract_path, start_line, end_line)
             elif lines:
                 start_line, end_line = lines
 
@@ -910,6 +925,38 @@ class TemplateRenderer:
         except Exception as e:
             logger.error(f"Error loading custom tags from {custom_file}: {e}")
             # Don't crash - just continue without custom tags
+
+    def _widen_to_marker_delimiters(self, source_path: Path, start_line: int, end_line: int) -> Tuple[int, int]:
+        """Extend a marker body range over its //@@start and //@@end lines.
+
+        Marker extraction returns the body only, but the delimiters are part
+        of the same edit whenever a marker is introduced alongside the change
+        it documents — so validation coverage claims them with the body.
+        """
+        try:
+            lines = source_path.read_text().splitlines()
+        except OSError:
+            return start_line, end_line
+        if start_line >= 2 and MARKER_DIRECTIVE_RE.match(lines[start_line - 2]):
+            start_line -= 1
+        if end_line < len(lines) and MARKER_DIRECTIVE_RE.match(lines[end_line]):
+            end_line += 1
+        return start_line, end_line
+
+    def _ref_is_changes_target(self, ref: str) -> bool:
+        """True when ref resolves to the destination commit of the -V range."""
+        target_sha = getattr(self.changes_set, "target_sha", None)
+        if not target_sha:
+            return False
+        if ref not in self._ref_sha_cache:
+            result = subprocess.run(
+                ["git", "rev-parse", f"{ref}^{{commit}}"],
+                capture_output=True,
+                cwd=self.repo_path,
+                text=True,
+            )
+            self._ref_sha_cache[ref] = result.stdout.strip() if result.returncode == 0 else None
+        return self._ref_sha_cache[ref] == target_sha
 
     def _normalize_enclosure_context(self, value) -> int:
         """Validate and normalize enclosure_context."""

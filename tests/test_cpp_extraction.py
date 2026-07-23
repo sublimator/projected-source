@@ -403,7 +403,10 @@ class TestCppRendererEnclosureContext:
         assert " 104         if (input < 0) {" in result
         assert "class ClassWithMethods" not in result
 
-    def test_enclosure_context_coverage_tracks_only_displayed_segments(self, tmp_path):
+    def test_enclosure_context_coverage_claims_marker_not_display_segments(self, tmp_path):
+        """Coverage claims the marker body plus its //@@ delimiters (3-5);
+        the enclosure head/tail shown by enclosure_context is presentation
+        only and must not claim the lines it displays."""
         src = tmp_path / "example.cpp"
         src.write_text(
             "void f() {\n"
@@ -432,7 +435,7 @@ class TestCppRendererEnclosureContext:
         assert "   4     int shown = 1;" in rendered
         assert "   8 }" in rendered
         assert "int hidden" not in rendered
-        assert [(r.start_line, r.end_line) for r in changes.uncovered()] == [(2, 3), (5, 7)]
+        assert [(r.start_line, r.end_line) for r in changes.uncovered()] == [(1, 2), (6, 8)]
 
     def test_function_marker_default_enclosure_context(self, renderer):
         result = renderer._code_function(

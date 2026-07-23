@@ -591,6 +591,36 @@ class CppExtractor(BaseExtractor):
 
         return self._extract_enclosed_node_marker(file_path, result, marker, f"'{struct_name}'")
 
+    def extract_enum(self, file_path: Path, enum_name: str) -> Tuple[str, int, int]:
+        """
+        Extract a C++ enum or enum class definition by name.
+
+        Args:
+            file_path: Path to the file
+            enum_name: Name of the enum (can include :: for namespace/nesting)
+
+        Returns:
+            Tuple of (enum_text, start_line, end_line)
+
+        Raises:
+            ValueError: If the enum is not found, or the name resolves to a
+                        non-enum symbol
+        """
+        source = file_path.read_bytes()
+        result = self.cpp_parser.extract_struct_or_class_by_name(source, enum_name)
+
+        if not result:
+            raise ValueError(f"Enum '{enum_name}' not found in {file_path}")
+        if result.node_type != "enum_specifier":
+            kind = (result.node_type or "symbol").replace("_specifier", "")
+            raise ValueError(
+                f"'{enum_name}' in {file_path} is a {kind}, not an enum — "
+                f"use struct= for classes/structs or var= for declarations"
+            )
+
+        logger.debug(f"Found enum '{enum_name}' at {result.location}")
+        return result.to_tuple()
+
     def extract_function_macro(self, file_path: Path, macro_spec: Dict) -> Tuple[str, int, int]:
         """
         Extract a function defined by a macro (like DEFINE_JS_FUNCTION).

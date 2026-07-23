@@ -132,6 +132,9 @@ def check(input_path, repo_path, jobs, strict, show_stale):
     ignoring the volatile metadata header), unrendered (no committed .md
     beside the template), ok. Exit 1 on any broken template; with --strict,
     also on stale/unrendered.
+
+    Note: this --strict is about rendered-artifact freshness. Validating
+    that code changes are documented is 'render -V <base> --strict'.
     """
     repo_path = repo_path.resolve()
 
