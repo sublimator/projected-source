@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 import click
+from rich.markup import escape
 from watchfiles import DefaultFilter, watch
 
 from ..core.changes_set import ChangesSet
@@ -366,7 +367,7 @@ def render(
                     range_display = f"{detected[:12]}..HEAD"
                 console.print(f"[cyan]Validating changes: {range_display}[/cyan]")
             except RuntimeError as e:
-                console.print(f"[red]✗ Failed to get diff: {e}[/red]")
+                console.print(f"[red]✗ Failed to get diff: {escape(str(e))}[/red]")
                 sys.exit(1)
 
         # Process based on input type
@@ -409,53 +410,15 @@ def render(
 
     def render_cycle():
         """Render once, including optional change-coverage reporting."""
-        changes_set = None
+        # Reporting must happen while the effective repo is still alive —
+        # under --commit that is a temporary worktree removed on exit.
         if commit:
             with git_worktree_at_commit(repo_path, commit) as worktree_path:
                 changes_set = do_render(worktree_path)
+                _report_validation(changes_set, worktree_path, strict)
         else:
             changes_set = do_render(repo_path)
-
-        # Report validation results
-        if changes_set is not None:
-            uncovered = changes_set.uncovered()
-            if uncovered:
-                console.print(f"\n[yellow]⚠ {len(uncovered)} uncovered regions:[/yellow]")
-                # Group by file
-                by_file = defaultdict(list)
-                for region in uncovered:
-                    by_file[region.file_path].append((region.start_line, region.end_line))
-
-                for abs_path, ranges in by_file.items():
-                    try:
-                        rel_path = abs_path.relative_to(repo_path)
-                    except ValueError:
-                        rel_path = abs_path
-                    console.print(f"\n[cyan]━━━ {rel_path} ━━━[/cyan]")
-
-                    # Read file once, show each range with surrounding
-                    # context. Context is diagnostic only — the obligation
-                    # is the uncovered lines themselves.
-                    try:
-                        lines = abs_path.read_text().splitlines()
-                        for start, end in ranges:
-                            console.print(f"[dim]{start}-{end}:[/dim]")
-                            context_start = max(1, start - 3)
-                            context_end = min(len(lines), end + 3)
-                            for line_no in range(context_start, context_end + 1):
-                                text = lines[line_no - 1]
-                                if start <= line_no <= end:
-                                    console.print(f"  [dim]{line_no:4}[/dim] {text}")
-                                else:
-                                    console.print(f"  [dim]{line_no:4} {text}[/dim]")
-                    except Exception as e:
-                        console.print(f"  [red]Could not read file: {e}[/red]")
-
-                if strict:
-                    console.print("\n[red]✗ Validation failed (--strict mode)[/red]")
-                    sys.exit(1)
-            else:
-                console.print("[green]✓ All changes documented[/green]")
+            _report_validation(changes_set, repo_path, strict)
 
     # Render once, or remain attached and repeat after filesystem changes.
     try:
@@ -497,6 +460,56 @@ def render(
             else:
                 console.print(f"[green]No errors to collect[/green] (manifest: {manifest_path})")
             set_fixture_collector(None)
+
+
+def _report_validation(changes_set, effective_repo_path: Path, strict: bool) -> None:
+    """Report -V coverage results; exit 1 in strict mode when uncovered.
+
+    Source lines and error text are escaped before printing — they are
+    arbitrary text, not Rich markup.
+    """
+    if changes_set is None:
+        return
+
+    uncovered = changes_set.uncovered()
+    if not uncovered:
+        console.print("[green]✓ All changes documented[/green]")
+        return
+
+    console.print(f"\n[yellow]⚠ {len(uncovered)} uncovered regions:[/yellow]")
+    # Group by file
+    by_file = defaultdict(list)
+    for region in uncovered:
+        by_file[region.file_path].append((region.start_line, region.end_line))
+
+    for abs_path, ranges in by_file.items():
+        try:
+            rel_path = abs_path.relative_to(effective_repo_path)
+        except ValueError:
+            rel_path = abs_path
+        console.print(f"\n[cyan]━━━ {escape(str(rel_path))} ━━━[/cyan]")
+
+        # Read file once, show each range with surrounding context.
+        # Context is diagnostic only — the obligation is the uncovered
+        # lines themselves.
+        try:
+            lines = abs_path.read_text().splitlines()
+            for start, end in ranges:
+                console.print(f"[dim]{start}-{end}:[/dim]")
+                context_start = max(1, start - 3)
+                context_end = min(len(lines), end + 3)
+                for line_no in range(context_start, context_end + 1):
+                    text = escape(lines[line_no - 1])
+                    if start <= line_no <= end:
+                        console.print(f"  [dim]{line_no:4}[/dim] {text}")
+                    else:
+                        console.print(f"  [dim]{line_no:4} {text}[/dim]")
+        except Exception as e:
+            console.print(f"  [red]Could not read file: {escape(str(e))}[/red]")
+
+    if strict:
+        console.print("\n[red]✗ Validation failed (--strict mode)[/red]")
+        sys.exit(1)
 
 
 def _render_stdin(
@@ -541,7 +554,7 @@ def _render_stdin(
             console.print(f"[green]✓[/green] stdin → {output_file}")
 
     except Exception as e:
-        console.print(f"[red]✗ Failed to render stdin:[/red] {e}")
+        console.print(f"[red]✗ Failed to render stdin:[/red] {escape(str(e))}")
         sys.exit(1)
 
 
@@ -589,7 +602,7 @@ def _render_file(
             console.print(f"[green]✓[/green] {input_file} → {output_file}")
 
     except Exception as e:
-        console.print(f"[red]✗ Failed to render {input_file}:[/red] {e}")
+        console.print(f"[red]✗ Failed to render {input_file}:[/red] {escape(str(e))}")
         sys.exit(1)
 
 
@@ -657,7 +670,7 @@ def _render_directory(
             success_count += 1
 
         except Exception as e:
-            console.print(f"  [red]✗[/red] {rel_path}: {e}")
+            console.print(f"  [red]✗[/red] {rel_path}: {escape(str(e))}")
             failed.append((rel_path, str(e)))
 
     # Summary
@@ -667,5 +680,5 @@ def _render_directory(
     if failed:
         console.print(f"  [red]{len(failed)} templates failed:[/red]")
         for template, error in failed:
-            console.print(f"    • {template}: {error}")
+            console.print(f"    • {template}: {escape(error)}")
         sys.exit(1)

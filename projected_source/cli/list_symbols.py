@@ -7,6 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 import click
+from rich.markup import escape
 
 from ..languages import get_extractor
 from .helpers import console
@@ -48,7 +49,11 @@ def list_functions(file, include_tests):
     if include_tests and "include_tests" in inspect.signature(extractor.list_symbols).parameters:
         list_kwargs["include_tests"] = True
 
-    symbols = extractor.list_symbols(file_path, **list_kwargs)
+    try:
+        symbols = extractor.list_symbols(file_path, **list_kwargs)
+    except Exception as e:
+        console.print(f"[red]Could not read symbols from {file}: {escape(str(e))}[/red]")
+        raise SystemExit(1)
 
     if not symbols:
         console.print(f"[yellow]No extractable symbols found in {file}[/yellow]")
@@ -99,10 +104,12 @@ def list_functions(file, include_tests):
 
             # Show signature hint for overloaded functions
             if name in overloaded and sym.get("signature"):
-                parts.append(f"[dim]signature='{sym['signature']}'[/dim]")
+                # Signatures are raw source text (e.g. '(char buf[size])')
+                # — escape so Rich doesn't eat brackets as markup.
+                parts.append(f"[dim]signature='{escape(sym['signature'])}'[/dim]")
 
             extra = "  ".join(parts)
-            console.print(f"    [cyan]'{name}'[/cyan]  {extra}")
+            console.print(f"    [cyan]'{escape(name)}'[/cyan]  {extra}")
 
         console.print()
 
