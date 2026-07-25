@@ -680,6 +680,25 @@ def _report_validation(
                 spans = _claim_spans(r.regions)
                 console.print(f"    [yellow]{escape(str(_rel(r.file_path)))}:{spans} ({density:.0%})[/yellow]")
 
+    if cfg.max_code_lines is not None:
+        oversized = []
+        for r in records:
+            if r.bucket != "code":
+                continue
+            span = sum(e - s + 1 for s, e in r.regions)
+            if span > cfg.max_code_lines:
+                oversized.append((r, span))
+        if oversized:
+            console.print(
+                f"  [yellow]{len(oversized)} code() extract(s) over max_code_lines "
+                f"{cfg.max_code_lines} (split into marked sub-chunks):[/yellow]"
+            )
+            for r, span in sorted(oversized, key=lambda rs: -rs[1]):
+                console.print(
+                    f"    [yellow]{escape(str(_rel(r.file_path)))}:{_claim_spans(r.regions)} "
+                    f"({span} lines)[/yellow]"
+                )
+
     if cfg.max_audit_changed_lines is not None:
         big = [
             r for r in records

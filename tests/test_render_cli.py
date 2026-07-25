@@ -883,3 +883,38 @@ def test_link_renders_intra_doc_anchor_and_chunk_emits_target(tmp_path):
     assert '<a id="chunk-app-owner"></a>' in out
     assert "[app-owner](#chunk-app-owner)" in out
     assert "[the cache owner](#chunk-app-owner)" in out
+
+
+def test_max_code_lines_flags_oversized_extract(tmp_path, monkeypatch):
+    """A code() extract longer than max_code_lines is flagged as a dump-by-bulk,
+    even at high change density."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for a in (["init"], ["config", "user.email", "t@t.com"], ["config", "user.name", "T"]):
+        subprocess.run(["git", *a], cwd=repo, capture_output=True, check=True)
+
+    body = "\n".join(f"    int a{i} = {i};" for i in range(40))
+    (repo / "file.cpp").write_text(f"int big() {{\n{body}\n    return a0;\n}}\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, capture_output=True, check=True)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    # touch every line so density is high — the gate must still fire on span
+    (repo / "file.cpp").write_text(
+        f"int big() {{\n" + "\n".join(f"    int a{i} = {i + 1};" for i in range(40)) + "\n    return a0;\n}\n"
+    )
+    subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "change"], cwd=repo, capture_output=True, check=True)
+
+    (repo / ".projected-source.toml").write_text("[validation]\nmax_code_lines = 25\n")
+    tpl = repo / "doc.md.j2"
+    tpl.write_text("{{ code('file.cpp', function='big', github=False) }}\n")
+
+    result = CliRunner().invoke(
+        cli, ["render", str(tpl), str(tmp_path / "out.md"), "-r", str(repo), "--no-header", "-V", base]
+    )
+    out = _strip_ansi(result.output)
+    assert "over max_code_lines 25" in out, out
+    assert "43 lines" in out  # 40 body + signature + open/close brace lines
