@@ -187,7 +187,7 @@ class ChangesSet:
         # The disjoint per-bucket partition is a separate pure computation
         # (partition()) over the frozen snapshot of D plus these records, so it
         # is order-independent without changing the residual semantics.
-        self._claims: List[Tuple[str, Path, List[Tuple[int, int]]]] = []
+        self._claims: List[Tuple[str, Path, List[Tuple[int, int]], Optional[str]]] = []
         # Frozen snapshot of D (the full obligation set), captured once the diff
         # is parsed — before any claim erodes _regions — so |D| and the partition
         # denominators stay recoverable.

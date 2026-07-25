@@ -59,7 +59,7 @@ def extract_review_scope(source: str) -> Optional[Dict[str, Any]]:
             and node.target.name == "review_scope"
         ):
             try:
-                value = node.node.as_const()
+                value = node.node.as_const()  # type: ignore[attr-defined]  # jinja2 nodes have as_const() at runtime
             except nodes.Impossible:
                 raise ReviewScopeError(
                     "review_scope must be a literal dict (no variables or calls)"

@@ -381,7 +381,7 @@ def render(
             include = exclude = None
             try:
                 if input_is_stdin:
-                    scope = extract_review_scope(stdin_content)
+                    scope = extract_review_scope(stdin_content or "")
                 elif input_is_dir:
                     scope = None
                     dir_scope_ignored = _warn_dir_scope(input_path)  # F2/N4
