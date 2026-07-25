@@ -8,6 +8,7 @@ import click
 
 from .. import setup_logging
 from .ai_guide import ai_guide
+from .audit_stubs import audit_stubs
 from .bug_report import bug_report
 from .check import check
 from .find_markers import find_markers
@@ -34,6 +35,7 @@ def cli(verbose, debug):
 cli.add_command(render)
 cli.add_command(check)
 cli.add_command(ai_guide)
+cli.add_command(audit_stubs)
 cli.add_command(bug_report)
 cli.add_command(find_markers)
 cli.add_command(list_functions)
