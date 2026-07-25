@@ -114,6 +114,72 @@ Deletion-only hunks are not yet modeled and produce no obligation.
 Prefer the narrowest exemption — whole-file `ignore_changes()` hides future
 changes in that file from validation.
 
+### audit() — acknowledge a change without narrating it
+
+`audit()` is the third change-handling verb: it records a changed region in a
+persistent, reader-invisible `<!-- audit ... -->` note with a **mandatory
+reason**, claiming -V coverage like `ignore_changes()` but leaving a durable
+audit trail instead of a silent exemption. Use it for boilerplate, mechanical,
+or covered-elsewhere changes a reviewer should still see were *considered*.
+
+```jinja
+{{{{ audit('src/file.cpp', function='onReadMessage',
+          reason='mechanical drain, no policy; covered by the framing test') }}}}
+```
+
+- Same selectors as `code()` (`function=`, `struct=`, `marker=`, `lines=`, …).
+- The note is `check`-stable (coordinates never depend on -V) and carries the
+  symbolic selector, so it survives refactoring; the reason is sanitized and a
+  missing/empty reason is a visible error.
+- **Geometry** — `minus=` subtracts one selector from another, so you narrate
+  the interesting part and audit the rest:
+
+```jinja
+{{{{ code('src/f.cpp', function='f', marker='core') }}}}
+{{{{ audit('src/f.cpp', function='f', minus={{'marker': 'core'}},
+          reason='frame around the narrated core') }}}}
+```
+
+### The coverage partition
+
+Every changed line lands in exactly one bucket — **narrated** (`code()`),
+**audited** (`audit()`), or **ignored** (`ignore_changes()`) — plus the residual
+nothing claimed. `render -V` prints the split; overlaps resolve by priority
+(narrated > audited > ignored), so the totals are disjoint and independent of
+document order. Claims matching zero changed lines (a typo'd or stale selector)
+are flagged, not hidden.
+
+### review_scope — declare base and file scope in the template
+
+A single entry template can declare its own review contract as a literal that
+the CLI reads *before* the diff is computed:
+
+```jinja
+{{% set review_scope = {{
+    "base": "origin/main",
+    "include": ["src/**"],
+    "exclude": ["**/test/**"],
+}} %}}
+```
+
+`include`/`exclude` (diff-relative POSIX globs) filter which files' changes are
+obligations, so a review on a long-lived branch validates *its fix*, not the
+whole branch diff; `base` seeds the diff (an explicit CLI `-V` overrides it). It
+must be a literal — a computed value is a hard error — and it is read from the
+entry template only (an included child's scope is ignored).
+
+### audit-stubs — acknowledge the leftovers
+
+After narrating the interesting changes, generate paste-ready `audit()` lines
+for whatever is still uncovered:
+
+```bash
+projected-source audit-stubs -V origin/main docs/review.md.j2
+```
+
+It renders the document, then prints one `{{{{ audit(...) }}}}` stub per residual
+region (stdout, paste-ready) for you to fill each reason.
+
 Extractions pinned with `ref=` claim coverage only when the ref is the
 destination commit of the validated range (e.g. `ref=B` with `-V A..B`);
 other refs live in a different coordinate space and claim nothing.
