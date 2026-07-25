@@ -18,6 +18,7 @@ from rich.markup import escape
 from watchfiles import DefaultFilter, watch
 
 from ..core.changes_set import ChangesSet
+from ..core.config import load_config
 from ..core.review_scope import ReviewScopeError, read_template_scope
 from ..core.html import default_html_output, markdown_to_html
 from ..core.renderer import TemplateRenderer
@@ -375,6 +376,14 @@ def render(
                     if base is None and scope["base"]:
                         base = scope["base"]
 
+            # Repo/user config: default excludes apply on top of any template
+            # scope (union), so a repo can drop vendored/generated trees globally.
+            cfg = load_config(
+                input_path if not input_is_stdin and not input_is_dir else effective_repo_path
+            )
+            if cfg.scope_exclude:
+                exclude = list(cfg.scope_exclude) + list(exclude or [])
+
             try:
                 changes_set = ChangesSet.from_diff(
                     base=base, repo_path=effective_repo_path, include=include, exclude=exclude
@@ -531,6 +540,58 @@ def _report_validation(changes_set, effective_repo_path: Path, strict: bool) -> 
                 rel = r.file_path
             spans = ",".join(f"{s}-{e}" for s, e in r.regions) or "whole-file"
             console.print(f"    [yellow]{r.bucket} {escape(str(rel))}:{spans}[/yellow]")
+
+    # Policy knobs from .projected-source.toml / user config, computed from the
+    # partition records. Surfaced as warnings — visibility over hard-fail.
+    cfg = load_config(effective_repo_path)
+
+    def _rel(p):
+        try:
+            return p.relative_to(effective_repo_path)
+        except ValueError:
+            return p
+
+    if cfg.max_audit_ratio is not None and total:
+        ratio = buckets["audit"] / total
+        if ratio > cfg.max_audit_ratio:
+            console.print(
+                f"  [yellow]audited {ratio:.0%} of changes (> max_audit_ratio "
+                f"{cfg.max_audit_ratio:.0%}) — narrate more, audit less[/yellow]"
+            )
+
+    if cfg.min_density is not None:
+        dumps = []
+        for r in records:
+            if r.bucket != "code":
+                continue
+            span = sum(e - s + 1 for s, e in r.regions)
+            density = (r.changed_lines / span) if span else 1.0
+            if density < cfg.min_density:
+                dumps.append((r, density))
+        if dumps:
+            console.print(
+                f"  [yellow]{len(dumps)} code() extract(s) below min_density "
+                f"{cfg.min_density:.0%} (mostly unchanged lines — narrow with a marker):[/yellow]"
+            )
+            for r, density in dumps:
+                spans = ",".join(f"{s}-{e}" for s, e in r.regions)
+                console.print(f"    [yellow]{escape(str(_rel(r.file_path)))}:{spans} ({density:.0%})[/yellow]")
+
+    if cfg.max_audit_changed_lines is not None:
+        big = [
+            r for r in records
+            if r.bucket == "audit" and r.changed_lines > cfg.max_audit_changed_lines
+        ]
+        if big:
+            console.print(
+                f"  [yellow]{len(big)} audit() claim(s) over max_changed_lines "
+                f"{cfg.max_audit_changed_lines} (too much per audit — split them):[/yellow]"
+            )
+            for r in big:
+                spans = ",".join(f"{s}-{e}" for s, e in r.regions)
+                console.print(
+                    f"    [yellow]{escape(str(_rel(r.file_path)))}:{spans} ({r.changed_lines} lines)[/yellow]"
+                )
 
     if not uncovered:
         console.print("  residual      0  [green]✓ all changes accounted for[/green]")
