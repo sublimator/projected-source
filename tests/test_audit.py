@@ -195,3 +195,34 @@ def test_whole_file_audit_claims_all(repo, tmp_path):
     assert not changes.is_complete()
     _render(repo, tmp_path, '{{ audit("f.cpp", reason="all boilerplate") }}', changes)
     assert changes.is_complete()
+
+
+def test_partition_through_render(repo, tmp_path):
+    """The renderer routes code/audit/ignore into disjoint buckets end to end."""
+    (repo / "f.cpp").write_text(
+        "int foo() {\n    return 0;\n}\n"
+        "int bar() {\n    return 0;\n}\n"
+        "int baz() {\n    return 0;\n}\n"
+        "int qux() {\n    return 0;\n}\n"
+    )
+    base = _commit(repo, "init")
+    (repo / "f.cpp").write_text(
+        "int foo() {\n    int a = 1;\n    return a;\n}\n"
+        "int bar() {\n    int b = 2;\n    return b;\n}\n"
+        "int baz() {\n    int c = 3;\n    return c;\n}\n"
+        "int qux() {\n    int d = 4;\n    return d;\n}\n"
+    )
+    _commit(repo, "change")
+    changes = ChangesSet.from_diff(base=base, repo_path=repo)
+    result = _render(
+        repo, tmp_path,
+        '{{ code("f.cpp", function="foo") }}\n'
+        '{{ audit("f.cpp", function="bar", reason="mirrors foo") }}\n'
+        '{{ ignore_changes("f.cpp", function="baz") }}\n',
+        changes,
+    )
+    assert result.ok
+    buckets, _ = changes.partition()
+    assert buckets == {"code": 2, "audit": 2, "ignore": 2}   # each function: 2 changed lines
+    assert changes.changed_line_count() == 8                 # qux (2 lines) is the residual
+    assert not changes.is_complete()

@@ -557,13 +557,13 @@ class TemplateRenderer:
                     # above the extracted region don't shift the wrong rows.
                     committed_start = self.github.map_to_committed_line(display_path, coverage_start)
                     committed_end = self.github.map_to_committed_line(display_path, coverage_end)
-                    self.changes_set.subtract(display_path, committed_start, committed_end)
+                    self.changes_set.claim("code", display_path, [(committed_start, committed_end)])
                 elif self._ref_is_changes_target(active_ref):
                     # Pinned at the validated range's destination commit: the
                     # extraction's coordinates are already in the same space
                     # as the diff's new-version lines. Any other ref lives in
                     # an unrelated coordinate space and claims nothing.
-                    self.changes_set.subtract(display_path, coverage_start, coverage_end)
+                    self.changes_set.claim("code", display_path, [(coverage_start, coverage_end)])
 
             # Remap line numbers if requested (for sharing docs from dirty files)
             display_start = start_line
@@ -699,7 +699,7 @@ class TemplateRenderer:
         )
         if not has_spec:
             # Ignore all lines (use a large range)
-            self.changes_set.subtract(resolved_path, 1, 999999)
+            self.changes_set.claim("ignore", resolved_path, [(1, 999999)])
             logger.info(f"Ignoring all changes in: {file_path}")
             return ""
 
@@ -756,7 +756,7 @@ class TemplateRenderer:
             # claim only when the ref is the validated range's destination.
             if active_ref:
                 if self._ref_is_changes_target(active_ref):
-                    self.changes_set.subtract(resolved_path, start_line, end_line)
+                    self.changes_set.claim("ignore", resolved_path, [(start_line, end_line)])
                     logger.info(f"Ignoring changes: {file_path}:{start_line}-{end_line} @ {active_ref}")
                 else:
                     logger.warning(
@@ -766,7 +766,7 @@ class TemplateRenderer:
             else:
                 committed_start = self.github.map_to_committed_line(resolved_path, start_line)
                 committed_end = self.github.map_to_committed_line(resolved_path, end_line)
-                self.changes_set.subtract(resolved_path, committed_start, committed_end)
+                self.changes_set.claim("ignore", resolved_path, [(committed_start, committed_end)])
                 logger.info(f"Ignoring changes: {file_path}:{committed_start}-{committed_end}")
 
         except Exception as e:
@@ -981,7 +981,7 @@ class TemplateRenderer:
         # Whole-file audit: claim everything, no line extents in the note.
         if not has_spec:
             if self.changes_set is not None:
-                self.changes_set.subtract(resolved_path, 1, 999999)
+                self.changes_set.claim("audit", resolved_path, [(1, 999999)])
             attrs = [self._comment_attr("file", self._safe_repo_rel(resolved_path)), 'scope="whole-file"']
             if active_ref:
                 attrs.append(self._comment_attr("ref", active_ref))
@@ -1027,7 +1027,7 @@ class TemplateRenderer:
             if self.changes_set is not None:
                 if active_ref:
                     if self._ref_is_changes_target(active_ref):
-                        self.changes_set.subtract(resolved_path, start_line, end_line)
+                        self.changes_set.claim("audit", resolved_path, [(start_line, end_line)])
                     else:
                         logger.warning(
                             f"audit ref='{active_ref}' is not the validated range's destination "
@@ -1036,7 +1036,7 @@ class TemplateRenderer:
                 else:
                     committed_start = self.github.map_to_committed_line(resolved_path, start_line)
                     committed_end = self.github.map_to_committed_line(resolved_path, end_line)
-                    self.changes_set.subtract(resolved_path, committed_start, committed_end)
+                    self.changes_set.claim("audit", resolved_path, [(committed_start, committed_end)])
 
             # Emitted extents are the DISPLAYED coordinates — never the committed
             # coverage coordinates — so the note is identical with or without -V

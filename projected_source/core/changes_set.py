@@ -30,6 +30,63 @@ class ChangeRegion:
         return f"{self.file_path}:{self.start_line}-{self.end_line}"
 
 
+# Coverage buckets in resolution priority: when claims overlap, the earlier
+# bucket wins the shared lines, so each changed line is credited exactly once.
+# code() (narrated) beats audit() (acknowledged) beats ignore_changes() (dropped).
+BUCKET_PRIORITY = ("code", "audit", "ignore")
+
+
+@dataclass
+class ClaimRecord:
+    """The settled result of one code()/audit()/ignore_changes() claim.
+
+    A claim carries a *list* of regions (geometry such as "symbol minus marker"
+    resolves to more than one), so the tally and reporting are region-set aware.
+    """
+
+    bucket: str
+    file_path: Path
+    regions: List[Tuple[int, int]]
+    changed_lines: int  # |regions ∩ D| against the frozen snapshot (density / M3)
+    credited_lines: int  # lines this claim actually removed from the residual
+
+
+def _count_in_intervals(intervals: List[Tuple[int, int]], start: int, end: int) -> int:
+    """Number of lines in [start, end] covered by a sorted interval list."""
+    if start > end:
+        start, end = end, start
+    total = 0
+    for reg_start, reg_end in intervals:
+        lo, hi = max(reg_start, start), min(reg_end, end)
+        if lo <= hi:
+            total += hi - lo + 1
+    return total
+
+
+def _subtract_interval(
+    intervals: List[Tuple[int, int]], start: int, end: int
+) -> List[Tuple[int, int]]:
+    """Remove [start, end] from an interval list, splitting on partial overlap.
+
+    Pure counterpart of ChangesSet.subtract(); used by partition() to replay
+    claims against a copy of D without touching the live residual.
+    """
+    if start > end:
+        start, end = end, start
+    out: List[Tuple[int, int]] = []
+    for reg_start, reg_end in intervals:
+        if end < reg_start or start > reg_end:
+            out.append((reg_start, reg_end))
+        elif start <= reg_start and end >= reg_end:
+            continue
+        else:
+            if reg_start < start:
+                out.append((reg_start, start - 1))
+            if reg_end > end:
+                out.append((end + 1, reg_end))
+    return out
+
+
 class ChangesSet:
     """
     Set-like structure for tracking changed code regions.
@@ -46,6 +103,17 @@ class ChangesSet:
         # Extractions pinned with ref= at exactly this commit share its line
         # coordinate space, so they may claim coverage directly.
         self.target_sha: Optional[str] = None
+        # claim() subtracts immediately (so uncovered()/is_complete() stay live
+        # and order-independent for the residual) AND records the claim here.
+        # The disjoint per-bucket partition is a separate pure computation
+        # (partition()) over the frozen snapshot of D plus these records, so it
+        # is order-independent without changing the residual semantics.
+        self._claims: List[Tuple[str, Path, List[Tuple[int, int]]]] = []
+        # Frozen snapshot of D (the full obligation set), captured once the diff
+        # is parsed — before any claim erodes _regions — so |D| and the partition
+        # denominators stay recoverable.
+        self._d_snapshot: Dict[Path, List[Tuple[int, int]]] = {}
+        self._d_line_count: int = 0
 
     @classmethod
     def from_diff(cls, base: Optional[str] = None, repo_path: Optional[Path] = None) -> "ChangesSet":
@@ -82,6 +150,7 @@ class ChangesSet:
             raise RuntimeError(f"git diff failed: {result.stderr}")
 
         changes._parse_diff(result.stdout, repo_path)
+        changes._freeze_d()
         target = diff_range.rsplit("..", 1)[-1].lstrip(".") or "HEAD"
         changes.target_sha = cls._resolve_commit(target, repo_path)
         return changes
@@ -295,6 +364,7 @@ class ChangesSet:
                 pass  # Don't add it
 
             # Partial overlap - may need to split
+            #@@start region-split
             else:
                 # Left remainder
                 if reg_start < start:
@@ -302,11 +372,60 @@ class ChangesSet:
                 # Right remainder
                 if reg_end > end:
                     new_regions.append((end + 1, reg_end))
+            #@@end region-split
 
         if new_regions:
             self._regions[file_path] = new_regions
         else:
             del self._regions[file_path]
+
+    def _freeze_d(self) -> None:
+        """Snapshot D before any claim erodes _regions (see __init__)."""
+        self._d_snapshot = {p: list(regs) for p, regs in self._regions.items()}
+        self._d_line_count = sum(e - s + 1 for regs in self._d_snapshot.values() for s, e in regs)
+
+    def claim(self, bucket: str, file_path: Path, regions: List[Tuple[int, int]]) -> None:
+        """Claim coverage for one or more line spans.
+
+        `bucket` is one of BUCKET_PRIORITY. `regions` is a list of (start, end)
+        spans — one for an ordinary selector, several for geometry such as
+        "symbol minus marker". Each span is subtracted immediately (so the
+        residual and uncovered()/is_complete() stay live and order-independent)
+        and recorded, so partition() can attribute lines to buckets disjointly.
+        """
+        norm = [(min(s, e), max(s, e)) for s, e in regions]
+        self._claims.append((bucket, file_path, norm))
+        for s, e in norm:
+            self.subtract(file_path, s, e)
+
+    def partition(self) -> Tuple[Dict[str, int], List[ClaimRecord]]:
+        """Attribute every changed line to exactly one bucket, order-independently.
+
+        Replays the recorded claims against a fresh copy of the frozen D in
+        bucket-priority order (code > audit > ignore): the first bucket to claim
+        a line is credited it; later overlapping claims get nothing for it. The
+        live residual (_regions) is untouched — this is a pure report-time
+        computation. Returns (bucket -> line count, per-claim records).
+        """
+        residual = {p: list(regs) for p, regs in self._d_snapshot.items()}
+        bucket_lines = {b: 0 for b in BUCKET_PRIORITY}
+        records: List[ClaimRecord] = []
+        for bucket in BUCKET_PRIORITY:
+            for claim_bucket, path, regions in self._claims:
+                if claim_bucket != bucket:
+                    continue
+                changed = sum(_count_in_intervals(self._d_snapshot.get(path, []), s, e) for s, e in regions)
+                credited = 0
+                for s, e in regions:
+                    credited += _count_in_intervals(residual.get(path, []), s, e)
+                    residual[path] = _subtract_interval(residual.get(path, []), s, e)
+                bucket_lines[bucket] += credited
+                records.append(ClaimRecord(bucket, path, regions, changed, credited))
+        return bucket_lines, records
+
+    def changed_line_count(self) -> int:
+        """Total changed lines in D (the obligation set)."""
+        return self._d_line_count
 
     def uncovered(self) -> List[ChangeRegion]:
         """Return list of regions not yet claimed by documentation."""

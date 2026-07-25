@@ -463,20 +463,52 @@ def render(
 
 
 def _report_validation(changes_set, effective_repo_path: Path, strict: bool) -> None:
-    """Report -V coverage results; exit 1 in strict mode when uncovered.
+    """Report -V change-coverage as a three-way partition; exit 1 in strict mode
+    when any changed line is left uncovered.
 
-    Source lines and error text are escaped before printing — they are
-    arbitrary text, not Rich markup.
+    Every changed line is attributed to exactly one bucket — narrated (code()),
+    audited (audit()), or ignored (ignore_changes()) — plus the residual that no
+    verb claimed. Source lines and error text are escaped before printing; they
+    are arbitrary text, not Rich markup.
     """
     if changes_set is None:
         return
 
     uncovered = changes_set.uncovered()
+    total = changes_set.changed_line_count()
+    buckets, records = changes_set.partition()
+    residual_lines = total - sum(buckets.values())
+
+    plural = "" if total == 1 else "s"
+    console.print(f"\n[cyan]Change coverage[/cyan] — {total} changed line{plural}:")
+    console.print(f"  narrated {buckets['code']:>6}")
+    console.print(f"  audited  {buckets['audit']:>6}")
+    console.print(f"  ignored  {buckets['ignore']:>6}")
+
+    # M3: an audit()/ignore_changes() claim that matched no changed line at all
+    # (typo'd selector, stale symbol, or an out-of-scope path) is a durable
+    # assertion of review that covered nothing — surface it, don't hide it.
+    zero = [r for r in records if r.changed_lines == 0 and r.bucket in ("audit", "ignore")]
+    if zero:
+        console.print(
+            f"  [yellow]{len(zero)} claim{'' if len(zero) == 1 else 's'} matched 0 changed "
+            f"lines (typo / stale / out of scope):[/yellow]"
+        )
+        for r in zero:
+            try:
+                rel = r.file_path.relative_to(effective_repo_path)
+            except ValueError:
+                rel = r.file_path
+            spans = ",".join(f"{s}-{e}" for s, e in r.regions) or "whole-file"
+            console.print(f"    [yellow]{r.bucket} {escape(str(rel))}:{spans}[/yellow]")
+
     if not uncovered:
-        console.print("[green]✓ All changes documented[/green]")
+        console.print("  residual      0  [green]✓ all changes accounted for[/green]")
         return
 
-    console.print(f"\n[yellow]⚠ {len(uncovered)} uncovered regions:[/yellow]")
+    console.print(
+        f"  residual {residual_lines:>6}  in {len(uncovered)} region{'' if len(uncovered) == 1 else 's'}:"
+    )
     # Group by file
     by_file = defaultdict(list)
     for region in uncovered:
