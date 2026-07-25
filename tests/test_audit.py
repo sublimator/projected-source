@@ -136,6 +136,30 @@ def test_id_is_emitted_in_note(repo, tmp_path):
     assert 'id="admit"' in note
 
 
+def test_comment_end_bang_is_neutralized(repo, tmp_path):
+    """`--!>` also terminates an HTML comment (HTML5 comment-end-bang); it must
+    be neutralized like `-->` (N1)."""
+    (repo / "f.cpp").write_text("a\nb\n")
+    _commit(repo, "init")
+    note = _first_note(
+        _render(repo, tmp_path, '{{ audit("f.cpp", lines=(1, 1), reason="x--!>LEAK <b>y</b>") }}').text
+    )
+    inner = note[len("<!-- "): -len(" -->")]
+    assert "--!>" not in inner            # cannot bang-terminate the comment
+    assert "--!&gt;" in note              # neutralized form present
+    assert "<b>y</b>" in note             # a real < > pair is still byte-exact
+
+
+def test_committed_with_selector_is_a_visible_error(repo, tmp_path):
+    """committed= only makes sense with lines=; a selector resolves to
+    working-tree coords, so committed=+selector is a visible error (N5)."""
+    (repo / "f.cpp").write_text("int foo() {\n  return 0;\n}\n")
+    _commit(repo, "init")
+    result = _render(repo, tmp_path, '{{ audit("f.cpp", function="foo", committed=True, reason="x") }}')
+    assert not result.ok
+    assert "committed=True requires lines=" in result.text
+
+
 def test_double_dash_paths_and_markers_are_byte_exact(repo, tmp_path):
     """A `--` in a path or selector must survive verbatim so the note resolves (F1)."""
     (repo / "o--dd.cpp").write_text(

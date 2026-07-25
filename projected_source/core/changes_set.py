@@ -20,7 +20,10 @@ from typing import Dict, List, Optional, Tuple
 
 # Glob patterns that match every path (a catch-all include never "matches
 # nothing"), used to suppress a spurious unmatched-include warning on empty D.
-_CATCH_ALL_GLOBS = frozenset({"**", "*", "**/*"})
+# Patterns that match every path — a catch-all include never "matches nothing".
+# `*` is NOT here: since real glob semantics landed it stops at the first
+# separator, so `*` genuinely can match no changed file (N9).
+_CATCH_ALL_GLOBS = frozenset({"**", "**/*"})
 
 
 @functools.lru_cache(maxsize=512)
@@ -32,6 +35,11 @@ def _glob_regex(pattern: str) -> "re.Pattern":
     and `?` match within a single segment only — they do not cross `/`. This is
     proper glob, unlike fnmatch (where `*` spans separators).
     """
+    # Collapse runs of **/ so the sequential (?:.*/)? groups can't backtrack
+    # exponentially on a long non-matching path (N15).
+    while "**/**/" in pattern:
+        pattern = pattern.replace("**/**/", "**/")
+    pattern = pattern.replace("**/**", "**")
     i, n, out = 0, len(pattern), []
     while i < n:
         if pattern[i : i + 3] == "**/":
@@ -49,7 +57,7 @@ def _glob_regex(pattern: str) -> "re.Pattern":
         else:
             out.append(re.escape(pattern[i]))
             i += 1
-    return re.compile("^" + "".join(out) + "$")
+    return re.compile("^" + "".join(out) + r"\Z")  # \Z, not $, so a trailing newline can't match (N14)
 
 
 @dataclass
@@ -330,9 +338,9 @@ class ChangesSet:
         """Absolute path if `rel` is in review_scope, else None.
 
         Matches the diff-relative POSIX path against the include/exclude globs
-        (fnmatch semantics: '*' spans separators, so 'src/**' covers any depth).
-        Updates the per-pattern hit tally and the in-scope flag used to count
-        out-of-scope changed lines.
+        with real glob semantics (see _glob_regex: `**` crosses separators, `*`
+        does not). Updates the per-pattern hit tally and the in-scope flag used
+        to count out-of-scope changed lines.
         """
         rel_posix = Path(rel).as_posix()
         matched = [p for p in self._include if _glob_regex(p).match(rel_posix)]

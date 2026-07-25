@@ -370,6 +370,8 @@ def render(
         stdin_content = sys.stdin.read() if input_is_stdin else None
 
         changes_set: Optional[ChangesSet] = None
+        template_scope_declared = False   # a template review_scope was in effect
+        dir_scope_ignored = False         # directory mode dropped a declared scope (N4)
         if changes_base:
             # "auto" means auto-detect base
             base = None if changes_base == "auto" else changes_base
@@ -382,13 +384,14 @@ def render(
                     scope = extract_review_scope(stdin_content)
                 elif input_is_dir:
                     scope = None
-                    _warn_dir_scope(input_path)  # F2: directory mode can't honor it yet
+                    dir_scope_ignored = _warn_dir_scope(input_path)  # F2/N4
                 else:
                     scope = read_template_scope(input_path)
             except ReviewScopeError as e:
                 console.print(f"[red]✗ Invalid review_scope: {escape(str(e))}[/red]")
                 sys.exit(1)
             if scope:
+                template_scope_declared = True
                 include, exclude = scope["include"], scope["exclude"]
                 if base is None and scope["base"]:
                     base = scope["base"]
@@ -449,19 +452,30 @@ def render(
                 enclosure_context,
             )
 
-        return changes_set, cfg
+        return changes_set, cfg, template_scope_declared, dir_scope_ignored
 
     def render_cycle():
         """Render once, including optional change-coverage reporting."""
         # Reporting must happen while the effective repo is still alive —
         # under --commit that is a temporary worktree removed on exit.
+        def _report(changes_set, path, cfg, tmpl_scope, dir_scope_ignored):
+            _report_validation(changes_set, path, strict, cfg, tmpl_scope)
+            # N4: directory mode dropped a declared review_scope — a --strict run
+            # that "checked" the whole diff instead of the fix must not pass green.
+            if dir_scope_ignored and strict:
+                console.print(
+                    "\n[red]✗ Validation failed (--strict): a review_scope was declared but "
+                    "directory mode did not apply it[/red]"
+                )
+                sys.exit(1)
+
         if commit:
             with git_worktree_at_commit(repo_path, commit) as worktree_path:
-                changes_set, cfg = do_render(worktree_path)
-                _report_validation(changes_set, worktree_path, strict, cfg)
+                changes_set, cfg, tmpl_scope, dir_scope_ignored = do_render(worktree_path)
+                _report(changes_set, worktree_path, cfg, tmpl_scope, dir_scope_ignored)
         else:
-            changes_set, cfg = do_render(repo_path)
-            _report_validation(changes_set, repo_path, strict, cfg)
+            changes_set, cfg, tmpl_scope, dir_scope_ignored = do_render(repo_path)
+            _report(changes_set, repo_path, cfg, tmpl_scope, dir_scope_ignored)
 
     # Render once, or remain attached and repeat after filesystem changes.
     try:
@@ -515,29 +529,40 @@ def _claim_spans(regions) -> str:
     return ",".join(f"{s}-{e}" for s, e in regions)
 
 
-def _warn_dir_scope(directory: Path) -> None:
-    """Warn if any template in a rendered directory declares review_scope.
+_REVIEW_SCOPE_DECL_RE = re.compile(r"{%-?\s*set\s+review_scope\s*=")
+
+
+def _warn_dir_scope(directory: Path) -> bool:
+    """Warn, and return True, if any template in a rendered directory *declares*
+    review_scope.
 
     Directory mode shares one ChangesSet across templates, so per-template scope
-    is not yet honored — surface it loudly rather than silently validating a
-    different obligation set than the template asked for (F2).
+    is not yet honored (F2). Match an actual `{% set review_scope = %}`, not a
+    prose mention of the word (N4), and report back so --strict can fail rather
+    than validate a different obligation set than the template asked for.
     """
+    found = False
     try:
         templates = sorted(directory.rglob("*.j2"))
     except OSError:
-        return
+        return False
     for template in templates:
         try:
-            if "review_scope" in template.read_text(encoding="utf-8"):
-                console.print(
-                    f"[yellow]⚠ {escape(str(template))} declares review_scope, which directory "
-                    f"mode does not yet apply; validating the whole diff instead.[/yellow]"
-                )
+            text = template.read_text(encoding="utf-8")
         except OSError:
             continue
+        if _REVIEW_SCOPE_DECL_RE.search(text):
+            found = True
+            console.print(
+                f"[yellow]⚠ {escape(str(template))} declares review_scope, which directory "
+                f"mode does not yet apply; validating the whole diff instead.[/yellow]"
+            )
+    return found
 
 
-def _report_validation(changes_set, effective_repo_path: Path, strict: bool, config=None) -> None:
+def _report_validation(
+    changes_set, effective_repo_path: Path, strict: bool, config=None, template_scope_declared: bool = False
+) -> None:
     """Report -V change-coverage as a three-way partition; exit 1 in strict mode
     when any changed line is left uncovered.
 
@@ -635,7 +660,7 @@ def _report_validation(changes_set, effective_repo_path: Path, strict: bool, con
                 f"{cfg.min_density:.0%} (mostly unchanged lines — narrow with a marker):[/yellow]"
             )
             for r, density in dumps:
-                spans = ",".join(f"{s}-{e}" for s, e in r.regions)
+                spans = _claim_spans(r.regions)
                 console.print(f"    [yellow]{escape(str(_rel(r.file_path)))}:{spans} ({density:.0%})[/yellow]")
 
     if cfg.max_audit_changed_lines is not None:
@@ -649,26 +674,37 @@ def _report_validation(changes_set, effective_repo_path: Path, strict: bool, con
                 f"{cfg.max_audit_changed_lines} (too much per audit — split them):[/yellow]"
             )
             for r in big:
-                spans = ",".join(f"{s}-{e}" for s, e in r.regions)
+                spans = _claim_spans(r.regions)
                 console.print(
                     f"    [yellow]{escape(str(_rel(r.file_path)))}:{spans} ({r.changed_lines} lines)[/yellow]"
                 )
 
-    # H5 fail-half: if review_scope excluded every change there was nothing to
-    # validate — a green tick there is a lie. Fail --strict rather than pass
-    # vacuously (an over-broad exclude or a typo'd include that matched nothing).
+    # H5 fail-half. A *template* review_scope that left nothing to check — every
+    # change excluded (N2: only when the template, not a repo-config exclude,
+    # did it) or an include glob that matched no changed file (N3) — makes a
+    # green tick a lie. A config-only exclude that empties D (e.g. a vendor-only
+    # bump against a repo-wide `scope.exclude`) is legitimate and must pass.
     scope_emptied = total == 0 and changes_set.out_of_scope_line_count() > 0
+    unmatched = changes_set.unmatched_includes()
+    scope_vacuous = template_scope_declared and (scope_emptied or bool(unmatched))
 
     if not uncovered:
-        if scope_emptied:
+        if scope_vacuous:
             console.print(
-                "  residual      0  [yellow]⚠ nothing validated — review_scope excluded every change[/yellow]"
+                "  residual      0  [yellow]⚠ nothing meaningfully validated — review_scope "
+                "excluded every change or matched nothing[/yellow]"
             )
             if strict:
                 console.print(
                     "\n[red]✗ Validation failed (--strict): review_scope left nothing to check[/red]"
                 )
                 sys.exit(1)
+            return
+        if scope_emptied:  # config-origin exclude emptied D — legitimate
+            console.print(
+                "  residual      0  [green]✓ all in-scope changes accounted for[/green] "
+                "[dim](config scope excluded every change)[/dim]"
+            )
             return
         console.print("  residual      0  [green]✓ all changes accounted for[/green]")
         return

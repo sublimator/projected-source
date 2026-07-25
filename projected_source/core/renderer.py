@@ -41,6 +41,27 @@ PROJECTED_SOURCE_HEADER_RE = re.compile(
 )
 
 
+def _comment_safe(value: str) -> str:
+    """Make a string safe as key="value" inside an HTML comment, byte-exactly.
+
+    Neutralizes only the sequences that can break the comment, keeping
+    everything else (paths, selectors, `--`, `<`, `>`, `&`, whitespace) literal
+    so the trail stays greppable and re-resolvable:
+      - `"`   would close the attribute
+      - `-->` closes the comment (comment end state)
+      - `--!>` closes it too (HTML5 comment-end-bang state) — the case the
+        `>`-escape used to cover (N1)
+    No whitespace collapse here — that would silently rewrite a path with a
+    non-breaking space (N12); callers collapse multi-line values themselves.
+    """
+    return (
+        str(value)
+        .replace('"', "&quot;")
+        .replace("-->", "--&gt;")
+        .replace("--!>", "--!&gt;")
+    )
+
+
 @dataclass(frozen=True)
 class CodeError:
     """A code() extraction that failed during a render.
@@ -141,15 +162,11 @@ class ChunkExtension(Extension):
         body = caller()
         if not id:
             return body
-
-        def esc(v):
-            return str(v).replace('"', "&quot;").replace("-->", "--&gt;")
-
-        attrs = f'id="{esc(id)}"'
+        attrs = f'id="{_comment_safe(id)}"'  # shared helper (N11), so no drift and the N1 fix applies
         if tags:
             tagstr = ",".join(str(t) for t in tags) if isinstance(tags, (list, tuple)) else str(tags)
-            attrs += f' tags="{esc(tagstr)}"'
-        return f'<!-- chunk {attrs} -->\n{body}\n<!-- /chunk id="{esc(id)}" -->'
+            attrs += f' tags="{_comment_safe(tagstr)}"'
+        return f'<!-- chunk {attrs} -->\n{body}\n<!-- /chunk id="{_comment_safe(id)}" -->'
 
 
 def _collect_error_fixture(file_path: Path, error: str, template_context: str = None):
@@ -894,24 +911,10 @@ class TemplateRenderer:
             collapsed = collapsed[:399].rstrip() + "…"
         return collapsed
 
-    @staticmethod
-    def _escape_comment_value(value: str) -> str:
-        """Make a string safe as key="value" inside an HTML comment, byte-exactly.
-
-        Exactly two things can break the note: a `"` would end the attribute, and
-        a literal `-->` would terminate the comment early. Only those are
-        rewritten — everything else (including `--`, `<`, `>`, `&`) is kept
-        literal so paths and selectors stay byte-exact and re-resolve, and the
-        trail stays greppable. Neutralizing `-->` (not every `>`) means a lone
-        `operator>` or a path is untouched; the collapse of `--` is gone (H1: it
-        silently corrupted `operator--`, `o--dd.cpp`, and marker names).
-
-        Runs of whitespace collapse to one space so a multi-line value (e.g. an
-        extractor's exception text on the audit-error path) cannot break the
-        one-greppable-line-per-note invariant (S1).
-        """
-        collapsed = re.sub(r"\s+", " ", str(value))
-        return collapsed.replace('"', "&quot;").replace("-->", "--&gt;")
+    # Byte-exact comment escaping (module-level _comment_safe): only the
+    # comment-breaking sequences are neutralized; whitespace is left literal
+    # here (N12) and collapsed by callers on genuinely multi-line values.
+    _escape_comment_value = staticmethod(_comment_safe)
 
     def _comment_attr(self, key: str, value) -> str:
         return f'{key}="{self._escape_comment_value(value)}"'
@@ -1046,12 +1049,20 @@ class TemplateRenderer:
         """
 
         def fail(message: str) -> str:
+            # Collapse here (S1) since _escape_comment_value no longer does (N12).
+            message = re.sub(r"\s+", " ", str(message)).strip()
             self._errors.append(CodeError(message, file_path, None))
             return f'<!-- audit-error {self._comment_attr("file", file_path)} {self._comment_attr("error", message)} -->'
 
         clean_reason = self._sanitize_audit_reason(reason)
         if clean_reason is None:
             return fail("audit() requires a non-empty reason")
+
+        # committed= reinterprets lines= as already-committed coordinates; with a
+        # selector the extents are working-tree coords, so it's a category error
+        # (N5). Make the misuse a visible failure, not a silently wrong claim.
+        if committed and lines is None:
+            return fail("committed=True requires lines= (a selector resolves to working-tree coordinates)")
 
         # code_root prefix (per-call root= overrides the {% code_context %}
         # block root, same as code() — F6) + active ref.
@@ -1180,6 +1191,10 @@ class TemplateRenderer:
                 self._comment_attr("file", self._safe_repo_rel(resolved_path)),
                 self._comment_attr("lines", lines_str),
             ]
+            if committed:
+                # State the coordinate space in the note so the same lines= can't
+                # mean two things across a document (N6).
+                attrs.append('committed="true"')
             if id:
                 attrs.append(self._comment_attr("id", id))
             _tags = self._format_tags(tags)
