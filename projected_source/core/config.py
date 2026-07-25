@@ -11,19 +11,23 @@ read with the stdlib tomllib (Python >= 3.11). Unknown sections/keys are kept
 verbatim, so a project can encode policy this module does not yet interpret.
 """
 
+import logging
 import os
 import tomllib
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+logger = logging.getLogger(__name__)
+
 REPO_CONFIG_NAME = ".projected-source.toml"
 
 # Built-in defaults. `None` means "no policy" — the knob is inert until set.
+# Only knobs that are actually consumed live here; unknown sections a project
+# adds are preserved verbatim and readable via Config.get() (F18).
 DEFAULTS: Dict[str, Dict[str, Any]] = {
     "validation": {"min_density": None, "max_audit_ratio": None},
-    "audit": {"max_changed_lines": None, "min_reason_length": 0},
+    "audit": {"max_changed_lines": None},
     "scope": {"exclude": []},
-    "render": {"enclosure_context": None},
 }
 
 
@@ -33,7 +37,11 @@ def user_config_path() -> Path:
 
 
 def find_repo_config(start: Path) -> Optional[Path]:
-    """Nearest .projected-source.toml walking up from `start` (a file or dir)."""
+    """Nearest .projected-source.toml walking up from `start` (a file or dir).
+
+    Stops at the repository boundary (the first directory containing .git), so a
+    stray config in $HOME or / never sets policy for a repo below it (F20).
+    """
     current = start.resolve()
     if current.is_file():
         current = current.parent
@@ -41,6 +49,8 @@ def find_repo_config(start: Path) -> Optional[Path]:
         candidate = directory / REPO_CONFIG_NAME
         if candidate.is_file():
             return candidate
+        if (directory / ".git").exists():
+            break  # do not escape the repository
     return None
 
 
@@ -48,7 +58,13 @@ def _read_toml(path: Path) -> Dict[str, Any]:
     try:
         with open(path, "rb") as handle:
             return tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError):
+    except tomllib.TOMLDecodeError as exc:
+        # A malformed config must not silently disable all policy and widen the
+        # obligation set (F9) — surface it loudly, then treat as absent.
+        logger.warning("Ignoring malformed config %s: %s", path, exc)
+        return {}
+    except OSError as exc:
+        logger.warning("Could not read config %s: %s", path, exc)
         return {}
 
 
@@ -84,10 +100,6 @@ class Config:
     @property
     def max_audit_changed_lines(self) -> Optional[int]:
         return self.get("audit", "max_changed_lines")
-
-    @property
-    def min_reason_length(self) -> int:
-        return self.get("audit", "min_reason_length", 0) or 0
 
     @property
     def scope_exclude(self) -> List[str]:

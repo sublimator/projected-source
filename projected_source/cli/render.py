@@ -19,7 +19,7 @@ from watchfiles import DefaultFilter, watch
 
 from ..core.changes_set import ChangesSet
 from ..core.config import load_config
-from ..core.review_scope import ReviewScopeError, read_template_scope
+from ..core.review_scope import ReviewScopeError, extract_review_scope, read_template_scope
 from ..core.html import default_html_output, markdown_to_html
 from ..core.renderer import TemplateRenderer
 from .helpers import FixtureCollector, console, get_fixture_collector, set_fixture_collector
@@ -285,6 +285,11 @@ def render(
     context is shown around uncovered regions for diagnosis but is never
     itself an obligation.
     """
+    # Resolve -r to an absolute path (as check/audit-stubs do), so a relative
+    # repo path does not make _safe_repo_rel emit a relative note that `check`
+    # then re-renders as an absolute one and reports STALE (F14).
+    repo_path = repo_path.resolve()
+
     # Set up fixture collection if requested
     if collect_error_fixtures:
         # Find the projected-source package directory
@@ -355,32 +360,41 @@ def render(
 
     # Helper to do the actual rendering
     def do_render(effective_repo_path: Path):
-        # Set up ChangesSet for validation if requested (-V / --validate-changes)
+        # Config (repo + user) loaded once — scope-exclude defaults and the
+        # report's policy knobs read the same Config (F8).
+        cfg = load_config(
+            input_path if not input_is_stdin and not input_is_dir else effective_repo_path
+        )
+        # stdin is single-use: buffer it so review_scope can be read before
+        # from_diff and the same content rendered afterward (F2).
+        stdin_content = sys.stdin.read() if input_is_stdin else None
+
         changes_set: Optional[ChangesSet] = None
         if changes_base:
             # "auto" means auto-detect base
             base = None if changes_base == "auto" else changes_base
 
-            # review_scope: a single entry template may declare its own base and
-            # include/exclude globs. Read before from_diff (§5). Precedence for
-            # base: explicit CLI -V > template review_scope.base > auto-detect.
+            # review_scope from the entry template (single file or stdin); base
+            # precedence: explicit CLI -V > template review_scope.base > auto.
             include = exclude = None
-            if not input_is_stdin and not input_is_dir:
-                try:
+            try:
+                if input_is_stdin:
+                    scope = extract_review_scope(stdin_content)
+                elif input_is_dir:
+                    scope = None
+                    _warn_dir_scope(input_path)  # F2: directory mode can't honor it yet
+                else:
                     scope = read_template_scope(input_path)
-                except ReviewScopeError as e:
-                    console.print(f"[red]✗ Invalid review_scope: {escape(str(e))}[/red]")
-                    sys.exit(1)
-                if scope:
-                    include, exclude = scope["include"], scope["exclude"]
-                    if base is None and scope["base"]:
-                        base = scope["base"]
+            except ReviewScopeError as e:
+                console.print(f"[red]✗ Invalid review_scope: {escape(str(e))}[/red]")
+                sys.exit(1)
+            if scope:
+                include, exclude = scope["include"], scope["exclude"]
+                if base is None and scope["base"]:
+                    base = scope["base"]
 
             # Repo/user config: default excludes apply on top of any template
             # scope (union), so a repo can drop vendored/generated trees globally.
-            cfg = load_config(
-                input_path if not input_is_stdin and not input_is_dir else effective_repo_path
-            )
             if cfg.scope_exclude:
                 exclude = list(cfg.scope_exclude) + list(exclude or [])
 
@@ -409,6 +423,7 @@ def render(
                 header,
                 html_output,
                 enclosure_context,
+                template_content=stdin_content,
             )
         elif input_is_dir:
             _render_directory(
@@ -434,7 +449,7 @@ def render(
                 enclosure_context,
             )
 
-        return changes_set
+        return changes_set, cfg
 
     def render_cycle():
         """Render once, including optional change-coverage reporting."""
@@ -442,11 +457,11 @@ def render(
         # under --commit that is a temporary worktree removed on exit.
         if commit:
             with git_worktree_at_commit(repo_path, commit) as worktree_path:
-                changes_set = do_render(worktree_path)
-                _report_validation(changes_set, worktree_path, strict)
+                changes_set, cfg = do_render(worktree_path)
+                _report_validation(changes_set, worktree_path, strict, cfg)
         else:
-            changes_set = do_render(repo_path)
-            _report_validation(changes_set, repo_path, strict)
+            changes_set, cfg = do_render(repo_path)
+            _report_validation(changes_set, repo_path, strict, cfg)
 
     # Render once, or remain attached and repeat after filesystem changes.
     try:
@@ -490,7 +505,39 @@ def render(
             set_fixture_collector(None)
 
 
-def _report_validation(changes_set, effective_repo_path: Path, strict: bool) -> None:
+_WHOLE_FILE_SPAN = (1, 999999)
+
+
+def _claim_spans(regions) -> str:
+    """Format a claim's regions for the report, hiding the whole-file sentinel (F7)."""
+    if regions == [_WHOLE_FILE_SPAN]:
+        return "whole-file"
+    return ",".join(f"{s}-{e}" for s, e in regions)
+
+
+def _warn_dir_scope(directory: Path) -> None:
+    """Warn if any template in a rendered directory declares review_scope.
+
+    Directory mode shares one ChangesSet across templates, so per-template scope
+    is not yet honored — surface it loudly rather than silently validating a
+    different obligation set than the template asked for (F2).
+    """
+    try:
+        templates = sorted(directory.rglob("*.j2"))
+    except OSError:
+        return
+    for template in templates:
+        try:
+            if "review_scope" in template.read_text(encoding="utf-8"):
+                console.print(
+                    f"[yellow]⚠ {escape(str(template))} declares review_scope, which directory "
+                    f"mode does not yet apply; validating the whole diff instead.[/yellow]"
+                )
+        except OSError:
+            continue
+
+
+def _report_validation(changes_set, effective_repo_path: Path, strict: bool, config=None) -> None:
     """Report -V change-coverage as a three-way partition; exit 1 in strict mode
     when any changed line is left uncovered.
 
@@ -538,12 +585,26 @@ def _report_validation(changes_set, effective_repo_path: Path, strict: bool) -> 
                 rel = r.file_path.relative_to(effective_repo_path)
             except ValueError:
                 rel = r.file_path
-            spans = ",".join(f"{s}-{e}" for s, e in r.regions) or "whole-file"
-            console.print(f"    [yellow]{r.bucket} {escape(str(rel))}:{spans}[/yellow]")
+            console.print(f"    [yellow]{r.bucket} {escape(str(rel))}:{_claim_spans(r.regions)}[/yellow]")
+
+    # F11: a claim that aimed at real changed lines but was fully shadowed by a
+    # higher-priority bucket (e.g. audit() over lines code() already narrated) is
+    # redundant — surface it so overlapping claims are visible.
+    shadowed = [r for r in records if r.changed_lines > 0 and r.credited_lines == 0]
+    if shadowed:
+        console.print(
+            f"  [dim]{len(shadowed)} claim(s) shadowed by a higher-priority claim (redundant):[/dim]"
+        )
+        for r in shadowed:
+            try:
+                rel = r.file_path.relative_to(effective_repo_path)
+            except ValueError:
+                rel = r.file_path
+            console.print(f"    [dim]{r.bucket} {escape(str(rel))}:{_claim_spans(r.regions)}[/dim]")
 
     # Policy knobs from .projected-source.toml / user config, computed from the
     # partition records. Surfaced as warnings — visibility over hard-fail.
-    cfg = load_config(effective_repo_path)
+    cfg = config if config is not None else load_config(effective_repo_path)
 
     def _rel(p):
         try:
@@ -659,10 +720,12 @@ def _render_stdin(
     header=False,
     html_output=False,
     enclosure_context=3,
+    template_content=None,
 ):
-    """Render template from stdin."""
-    # Read template from stdin
-    template_content = sys.stdin.read()
+    """Render template from stdin (or from a pre-read buffer, so review_scope
+    can be extracted before the render)."""
+    if template_content is None:
+        template_content = sys.stdin.read()
 
     # Use current directory as template directory for relative paths
     renderer = TemplateRenderer(

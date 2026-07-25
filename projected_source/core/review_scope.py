@@ -9,12 +9,15 @@ child is invisible: "declare scope in the entry template" holds structurally.
 See .ai-docs/specs/audit-verb-and-change-partition.md §5.
 """
 
+import logging
 from typing import Any, Dict, List, Optional
 
 import jinja2
 from jinja2 import nodes
 
 from .renderer import CodeContextExtension
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_KEYS = {"base", "include", "exclude"}
 
@@ -36,7 +39,17 @@ def extract_review_scope(source: str) -> Optional[Dict[str, Any]]:
     env = jinja2.Environment(extensions=[CodeContextExtension])
     try:
         ast = env.parse(source)
-    except jinja2.TemplateSyntaxError:
+    except jinja2.TemplateSyntaxError as exc:
+        # Don't let a template that declares a scope lose it silently just
+        # because the minimal pre-pass env can't parse a render-time construct
+        # (a project extension, {% do %}, etc.) — warn so it isn't mistaken for
+        # "no scope" (F15).
+        if "review_scope" in source:
+            logger.warning(
+                "Template declares review_scope but the scope pre-pass could not parse it "
+                "(%s); review_scope was NOT applied.",
+                exc,
+            )
         return None
 
     for node in ast.body:

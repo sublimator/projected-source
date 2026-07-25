@@ -111,4 +111,6 @@ def audit_stubs(template: Path, base: str, repo_path: Path):
             rel = region.file_path
         rel_posix = rel.as_posix()
         start, end = region.start_line, region.end_line
-        print(f'{{{{ audit("{rel_posix}", lines=({start}, {end}), reason="") }}}}')
+        # committed=True: these are D (committed) coordinates, so audit() must
+        # claim them as-is rather than re-mapping working -> committed (F4).
+        print(f'{{{{ audit("{rel_posix}", lines=({start}, {end}), committed=True, reason="") }}}}')

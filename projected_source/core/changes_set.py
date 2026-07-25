@@ -11,12 +11,45 @@ change — requiring them would force documentation to match the shape of the
 unified diff rather than the edit itself.
 """
 
-import fnmatch
+import functools
 import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+# Glob patterns that match every path (a catch-all include never "matches
+# nothing"), used to suppress a spurious unmatched-include warning on empty D.
+_CATCH_ALL_GLOBS = frozenset({"**", "*", "**/*"})
+
+
+@functools.lru_cache(maxsize=512)
+def _glob_regex(pattern: str) -> "re.Pattern":
+    """Compile a POSIX-ish glob to a regex with real `**` vs `*` semantics.
+
+    `**` matches any number of path segments (including zero); a leading `**/`
+    also matches at the top level (so `**/test/**` matches `test/a.cpp`). `*`
+    and `?` match within a single segment only — they do not cross `/`. This is
+    proper glob, unlike fnmatch (where `*` spans separators).
+    """
+    i, n, out = 0, len(pattern), []
+    while i < n:
+        if pattern[i : i + 3] == "**/":
+            out.append("(?:.*/)?")  # zero or more leading segments
+            i += 3
+        elif pattern[i : i + 2] == "**":
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("^" + "".join(out) + "$")
 
 
 @dataclass
@@ -115,6 +148,7 @@ class ChangesSet:
         # denominators stay recoverable.
         self._d_snapshot: Dict[Path, List[Tuple[int, int]]] = {}
         self._d_line_count: int = 0
+        self._frozen: bool = False
         # review_scope: globs restricting which files' changes are obligations.
         # Matched against the diff-relative POSIX path (never the absolute
         # _regions key, which can raise for an out-of-repo root — M1). The
@@ -300,10 +334,10 @@ class ChangesSet:
         out-of-scope changed lines.
         """
         rel_posix = Path(rel).as_posix()
-        matched = [p for p in self._include if fnmatch.fnmatch(rel_posix, p)]
+        matched = [p for p in self._include if _glob_regex(p).match(rel_posix)]
         for p in matched:
             self._include_hits[p] = self._include_hits.get(p, 0) + 1
-        excluded = any(fnmatch.fnmatch(rel_posix, p) for p in self._exclude)
+        excluded = any(_glob_regex(p).match(rel_posix) for p in self._exclude)
         if matched and not excluded:
             self._current_out_of_scope = False
             return repo_path / rel
@@ -431,6 +465,7 @@ class ChangesSet:
         """Snapshot D before any claim erodes _regions (see __init__)."""
         self._d_snapshot = {p: list(regs) for p, regs in self._regions.items()}
         self._d_line_count = sum(e - s + 1 for regs in self._d_snapshot.values() for s, e in regs)
+        self._frozen = True
 
     def claim(self, bucket: str, file_path: Path, regions: List[Tuple[int, int]]) -> None:
         """Claim coverage for one or more line spans.
@@ -441,6 +476,11 @@ class ChangesSet:
         residual and uncovered()/is_complete() stay live and order-independent)
         and recorded, so partition() can attribute lines to buckets disjointly.
         """
+        # Freeze D on the first claim if from_diff did not (a directly built
+        # ChangesSet is the library API), so partition()/changed_line_count()
+        # are meaningful on every construction path (F13).
+        if not self._frozen:
+            self._freeze_d()
         norm = [(min(s, e), max(s, e)) for s, e in regions]
         self._claims.append((bucket, file_path, norm))
         for s, e in norm:
@@ -486,7 +526,7 @@ class ChangesSet:
         silently narrowing the gate to nothing — worth surfacing so an empty
         scope cannot pass --strict having verified nothing.
         """
-        return [p for p, hits in self._include_hits.items() if hits == 0 and p != "**"]
+        return [p for p, hits in self._include_hits.items() if hits == 0 and p not in _CATCH_ALL_GLOBS]
 
     def uncovered(self) -> List[ChangeRegion]:
         """Return list of regions not yet claimed by documentation."""

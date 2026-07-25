@@ -13,6 +13,7 @@ import pytest
 from click.testing import CliRunner
 
 from projected_source.cli.audit_stubs import audit_stubs
+from projected_source.cli.render import render
 
 
 def _git(repo, *args):
@@ -81,6 +82,32 @@ def test_all_changes_stubbed_when_nothing_narrated(repo):
     ranges = _stub_line_ranges(result.stdout)
     assert ranges                                # foo and bar regions both stubbed
     assert all('audit("f.cpp"' in line for line in result.stdout.splitlines() if "audit(" in line)
+
+
+def test_stub_round_trip_in_dirty_tree(repo):
+    """A stub pasted back covers its region even in a dirty tree — committed=True
+    stops audit() re-mapping the already-committed coordinates (F4)."""
+    base = _two_func_change(repo)
+    # Dirty the tree: uncommitted lines above the functions shift working-tree
+    # line numbers away from the committed (D) ones.
+    (repo / "f.cpp").write_text("// uncommitted\n// lines\n" + (repo / "f.cpp").read_text())
+
+    result = _run(repo, '{{ code("f.cpp", function="foo") }}\n', base)  # narrate foo, stub bar
+    stubs = [ln for ln in result.stdout.splitlines() if ln.startswith("{{ audit")]
+    assert stubs and "committed=True" in stubs[0]
+
+    doc2 = (
+        '{{ code("f.cpp", function="foo") }}\n'
+        + "\n".join(ln.replace('reason=""', 'reason="boilerplate"') for ln in stubs)
+        + "\n"
+    )
+    (repo / "docs" / "r2.md.j2").write_text(doc2)
+    result2 = CliRunner().invoke(
+        render,
+        ["--no-header", "-V", base, "--strict", "-r", str(repo),
+         str(repo / "docs" / "r2.md.j2"), str(repo / "docs" / "r2.md")],
+    )
+    assert result2.exit_code == 0, result2.output   # residual is fully claimed
 
 
 def test_stdout_is_paste_ready(repo):

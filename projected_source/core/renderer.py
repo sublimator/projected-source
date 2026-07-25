@@ -726,31 +726,24 @@ class TemplateRenderer:
 
             extractor = get_extractor(extract_path)
 
-            if function:
-                _, start_line, end_line = extractor.extract_function(extract_path, function, signature)
-            elif function_macro:
-                macro_spec = {"name": function_macro} if isinstance(function_macro, str) else function_macro
-                _, start_line, end_line = extractor.extract_function_macro(extract_path, macro_spec)
-            elif macro_definition:
-                _, start_line, end_line = extractor.extract_macro_definition(extract_path, macro_definition)
-            elif var:
-                if hasattr(extractor, "extract_variable"):
-                    _, start_line, end_line = extractor.extract_variable(extract_path, var)
-                else:
-                    _, start_line, end_line = extractor.extract_struct(extract_path, var)
-            elif struct:
-                _, start_line, end_line = extractor.extract_struct(extract_path, struct)
-            elif message:
-                _, start_line, end_line = extractor.extract_message(extract_path, message)
-            elif enum:
-                _, start_line, end_line = extractor.extract_enum(extract_path, enum)
-            elif service:
-                _, start_line, end_line = extractor.extract_service(extract_path, service)
-            elif marker:
-                _, start_line, end_line = extractor.extract_marker(extract_path, marker)
-                start_line, end_line = self._widen_to_marker_delimiters(extract_path, start_line, end_line)
-            elif lines:
-                start_line, end_line = lines
+            # Shared selector dispatch (F22) — the same resolution code() and
+            # audit() use, so the three verbs cannot drift on what a selector
+            # points at.
+            start_line, end_line = self._extract_region_extents(
+                extractor,
+                extract_path,
+                function=function,
+                signature=signature,
+                struct=struct,
+                var=var,
+                function_macro=function_macro,
+                macro_definition=macro_definition,
+                marker=marker,
+                lines=lines,
+                message=message,
+                enum=enum,
+                service=service,
+            )
 
             # Same coordinate discipline as code() coverage: working-tree
             # extractions translate to committed lines; pinned extractions
@@ -860,8 +853,13 @@ class TemplateRenderer:
         trail stays greppable. Neutralizing `-->` (not every `>`) means a lone
         `operator>` or a path is untouched; the collapse of `--` is gone (H1: it
         silently corrupted `operator--`, `o--dd.cpp`, and marker names).
+
+        Runs of whitespace collapse to one space so a multi-line value (e.g. an
+        extractor's exception text on the audit-error path) cannot break the
+        one-greppable-line-per-note invariant (S1).
         """
-        return str(value).replace('"', "&quot;").replace("-->", "--&gt;")
+        collapsed = re.sub(r"\s+", " ", str(value))
+        return collapsed.replace('"', "&quot;").replace("-->", "--&gt;")
 
     def _comment_attr(self, key: str, value) -> str:
         return f'{key}="{self._escape_comment_value(value)}"'
@@ -876,8 +874,17 @@ class TemplateRenderer:
 
     @staticmethod
     def _describe_selector(spec: Dict) -> str:
-        """Short 'key=value' description of a minus selector, for the note."""
-        return ",".join(f"{k}={v}" for k, v in spec.items())
+        """Short 'key=value' description of a minus selector, for the note.
+
+        A `lines` tuple renders as `start-end` rather than leaking Python repr
+        (F24); other values stringify plainly.
+        """
+        parts = []
+        for key, value in spec.items():
+            if key == "lines" and isinstance(value, (list, tuple)) and len(value) == 2:
+                value = f"{value[0]}-{value[1]}"
+            parts.append(f"{key}={value}")
+        return ",".join(parts)
 
     def _audit_selector_attrs(
         self,
@@ -927,6 +934,7 @@ class TemplateRenderer:
     def _audit_function(
         self,
         file_path: str,
+        *,
         reason: str = None,
         function: str = None,
         struct: str = None,
@@ -942,6 +950,7 @@ class TemplateRenderer:
         ref: str = None,
         root: str = None,
         minus: Union[Dict, List[Dict]] = None,
+        committed: bool = False,
     ) -> str:
         """Acknowledge a changed region in the audit trail without narrating it.
 
@@ -967,8 +976,9 @@ class TemplateRenderer:
         if clean_reason is None:
             return fail("audit() requires a non-empty reason")
 
-        # code_root prefix (via {% code_context %}) + active ref, same as code()/ignore_changes()
-        code_root = str(self.env.globals.get("code_root", ""))
+        # code_root prefix (per-call root= overrides the {% code_context %}
+        # block root, same as code() — F6) + active ref.
+        code_root = root or str(self.env.globals.get("code_root", ""))
         effective_path = file_path
         if code_root and not Path(effective_path).is_absolute():
             effective_path = str(Path(code_root) / effective_path)
@@ -1052,20 +1062,30 @@ class TemplateRenderer:
                             f"audit ref='{active_ref}' is not the validated range's destination "
                             f"commit; not claiming coverage for {effective_path}"
                         )
+                elif committed:
+                    # Coords are already in committed / D space (e.g. from
+                    # audit-stubs); claim them directly — mapping again would
+                    # double-shift them in a dirty tree (F4).
+                    self.changes_set.claim("audit", resolved_path, list(regions))
                 else:
-                    committed = [
-                        (
-                            self.github.map_to_committed_line(resolved_path, s),
-                            self.github.map_to_committed_line(resolved_path, e),
-                        )
-                        for s, e in regions
-                    ]
-                    self.changes_set.claim("audit", resolved_path, committed)
+                    self.changes_set.claim(
+                        "audit",
+                        resolved_path,
+                        [
+                            (
+                                self.github.map_to_committed_line(resolved_path, s),
+                                self.github.map_to_committed_line(resolved_path, e),
+                            )
+                            for s, e in regions
+                        ],
+                    )
 
             # Emitted extents are the DISPLAYED coordinates — never the committed
             # coverage coordinates — so the note is identical with or without -V
             # (B5). Multiple regions render as a comma-separated list.
             def _disp(n: int) -> int:
+                if committed:
+                    return n  # already committed coordinates
                 if self.remap_dirty_lines and not active_ref:
                     return self.github.map_to_committed_line(resolved_path, n)
                 return n

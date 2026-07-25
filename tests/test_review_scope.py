@@ -110,9 +110,29 @@ def test_include_filters_D(repo):
 
 def test_exclude_filters_D(repo):
     base = _two_file_change(repo)
-    cs = ChangesSet.from_diff(base=base, repo_path=repo, exclude=["**/test/**", "test/**"])
+    # A single leading-`**/` pattern must match a TOP-LEVEL test/ too (F16).
+    cs = ChangesSet.from_diff(base=base, repo_path=repo, exclude=["**/test/**"])
     assert _files(cs) == ["a.cpp"]
     assert cs.out_of_scope_line_count() == 3
+
+
+def test_star_does_not_cross_separator(repo):
+    """`*` matches within one segment; `**` crosses segments (F17)."""
+    (repo / "src" / "deep").mkdir(parents=True)
+    (repo / "src" / "top.cpp").write_text("x\n")
+    (repo / "src" / "deep" / "nested.cpp").write_text("x\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "base")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "src" / "top.cpp").write_text("x\ny\n")
+    (repo / "src" / "deep" / "nested.cpp").write_text("x\ny\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "change")
+
+    star = ChangesSet.from_diff(base=base, repo_path=repo, include=["src/*.cpp"])
+    assert _files(star) == ["top.cpp"]                       # src/* stops at the separator
+    starstar = ChangesSet.from_diff(base=base, repo_path=repo, include=["src/**"])
+    assert sorted(_files(starstar)) == ["nested.cpp", "top.cpp"]  # ** crosses
 
 
 def test_no_scope_includes_everything(repo):

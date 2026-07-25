@@ -75,6 +75,19 @@ def test_zero_claim_is_visible_in_records():
     assert len(zero) == 1 and zero[0].bucket == "audit"   # M3 signal available
 
 
+def test_partition_freezes_d_lazily_on_first_claim():
+    """A directly-built ChangesSet (no from_diff, no manual _freeze_d) still
+    reports |D| and the partition correctly — freeze happens on first claim (F13)."""
+    p = Path("f.cpp")
+    cs = ChangesSet()
+    cs.add(p, 1, 10)
+    cs.claim("code", p, [(1, 5)])
+    assert cs.changed_line_count() == 10
+    buckets, _ = cs.partition()
+    assert buckets["code"] == 5
+    assert not cs.is_complete()          # 6-10 residual
+
+
 def test_geometry_multi_region_claim():
     """A single claim carrying two regions (symbol minus marker) is credited
     for both pieces — the region-set claim API geometry will use."""
