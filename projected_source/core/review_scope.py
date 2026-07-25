@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 import jinja2
 from jinja2 import nodes
 
-from .renderer import CodeContextExtension
+from .renderer import ChunkExtension, CodeContextExtension
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ def extract_review_scope(source: str) -> Optional[Dict[str, Any]]:
     # Same extension set as the renderer so a template using {% code_context %}
     # still parses; a genuinely broken template is left to surface its own error
     # at render time rather than here.
-    env = jinja2.Environment(extensions=[CodeContextExtension])
+    env = jinja2.Environment(extensions=[CodeContextExtension, ChunkExtension])
     try:
         ast = env.parse(source)
     except jinja2.TemplateSyntaxError as exc:

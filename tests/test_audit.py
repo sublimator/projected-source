@@ -114,6 +114,18 @@ def test_reason_is_html_comment_safe(repo, tmp_path):
     assert "<x>" in note and "& z" in note      # <, >, & are not entity-mangled
 
 
+def test_chunk_block_wraps_body_with_anchors(repo, tmp_path):
+    """{% chunk id=.. %}..{% endchunk %} delimits an addressable region."""
+    (repo / "f.cpp").write_text("int foo() {\n  return 1;\n}\n")
+    _commit(repo, "init")
+    out = _render(
+        repo, tmp_path,
+        '{% chunk id="admit" %}\nprose here\n{{ code("f.cpp", function="foo") }}\n{% endchunk %}\n',
+    ).text
+    assert '<!-- chunk id="admit" -->' in out and '<!-- /chunk id="admit" -->' in out
+    assert out.index('<!-- chunk id="admit" -->') < out.index("prose here") < out.index('<!-- /chunk id="admit" -->')
+
+
 def test_id_is_emitted_in_note(repo, tmp_path):
     """audit(id=...) carries the node id into the note (chunk-graph seed)."""
     (repo / "f.cpp").write_text("int foo() {\n  return 1;\n}\n")

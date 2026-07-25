@@ -112,6 +112,39 @@ class CodeContextExtension(Extension):
             self.environment.globals["code_ref"] = old_ref
 
 
+class ChunkExtension(Extension):
+    """{% chunk id='name' %}...{% endchunk %} — wrap a region (prose + code() +
+    audit()) as an addressable chunk-graph node.
+
+    KISS seed: it renders reader-invisible `<!-- chunk id=... -->` /
+    `<!-- /chunk id=... -->` anchors around the body so the region is
+    addressable (and delimited, unlike the single-point id= anchor on code()).
+    Edges/validation grow on top of these later.
+    """
+
+    tags = {"chunk"}
+
+    def parse(self, parser):
+        lineno = next(parser.stream).lineno
+        kwargs = []
+        while parser.stream.current.test("name") and parser.stream.look().test("assign"):
+            key = parser.stream.expect("name").value
+            parser.stream.expect("assign")
+            value = parser.parse_expression()
+            kwargs.append(nodes.Keyword(key, value, lineno=lineno))
+            if parser.stream.current.test("comma"):
+                next(parser.stream)
+        body = parser.parse_statements(["name:endchunk"], drop_needle=True)
+        return nodes.CallBlock(self.call_method("_render_chunk", [], kwargs), [], [], body).set_lineno(lineno)
+
+    def _render_chunk(self, id=None, caller=None):
+        body = caller()
+        if not id:
+            return body
+        safe = str(id).replace('"', "&quot;").replace("-->", "--&gt;")
+        return f'<!-- chunk id="{safe}" -->\n{body}\n<!-- /chunk id="{safe}" -->'
+
+
 def _collect_error_fixture(file_path: Path, error: str, template_context: str = None):
     """Collect a file as a fixture if fixture collection is enabled."""
     # Import here to avoid circular imports
@@ -166,7 +199,7 @@ class TemplateRenderer:
             loader=jinja2.FileSystemLoader(str(self.template_dir)),
             trim_blocks=True,
             lstrip_blocks=True,
-            extensions=[CodeContextExtension],
+            extensions=[CodeContextExtension, ChunkExtension],
         )
 
         # Register custom functions
