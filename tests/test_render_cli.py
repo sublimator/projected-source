@@ -11,6 +11,7 @@ Covers:
 """
 
 import json
+import subprocess
 
 import pytest
 from click.testing import CliRunner
@@ -810,3 +811,57 @@ def test_enclosure_auto_requires_marker(tmp_path):
 
     assert "❌ **ERROR**" in result
     assert "enclosure requires marker=" in result
+
+
+def _git(repo, *args):
+    import subprocess
+    subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=True)
+
+
+def test_min_density_span_floor_exempts_small_extracts(tmp_path, monkeypatch):
+    """The density gate must not flag extracts too small to be dumps.
+
+    A 4-line extract at 25% is one changed line, not padding; only the large
+    mostly-unchanged extract should be reported once min_density_span is set."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))  # isolate user config
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "t@t.com")
+    _git(repo, "config", "user.name", "T")
+
+    big_body = "\n".join(f"    int a{i} = {i};" for i in range(30))
+    src = repo / "file.cpp"
+    src.write_text(
+        f"int big() {{\n{big_body}\n    return a0;\n}}\n\n"
+        "int small() {\n    int s = 0;\n    return s;\n}\n"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "base")
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    # one changed line in each function → big ~3% density (span 32), small 25% (span 4)
+    src.write_text(
+        src.read_text().replace("int a0 = 0;", "int a0 = 999;").replace("int s = 0;", "int s = 7;")
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "change")
+
+    (repo / ".projected-source.toml").write_text(
+        "[validation]\nmin_density = 0.5\nmin_density_span = 10\n"
+    )
+    tpl = repo / "doc.md.j2"
+    tpl.write_text(
+        "{{ code('file.cpp', function='big', github=False) }}\n"
+        "{{ code('file.cpp', function='small', github=False) }}\n"
+    )
+
+    result = CliRunner().invoke(
+        cli, ["render", str(tpl), str(tmp_path / "out.md"), "-r", str(repo), "--no-header", "-V", base]
+    )
+    out = _strip_ansi(result.output)
+    assert "below min_density" in out, out
+    assert "file.cpp:1-33 (3%)" in out  # the large mostly-unchanged extract is flagged
+    # the tiny small() extract (span 4 < 10) must NOT appear as a dump
+    assert "(25%)" not in out, out

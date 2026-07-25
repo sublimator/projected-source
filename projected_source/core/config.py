@@ -25,7 +25,7 @@ REPO_CONFIG_NAME = ".projected-source.toml"
 # Only knobs that are actually consumed live here; unknown sections a project
 # adds are preserved verbatim and readable via Config.get() (F18).
 DEFAULTS: Dict[str, Dict[str, Any]] = {
-    "validation": {"min_density": None, "max_audit_ratio": None},
+    "validation": {"min_density": None, "min_density_span": 0, "max_audit_ratio": None},
     "audit": {"max_changed_lines": None},
     "scope": {"exclude": []},
 }
@@ -92,6 +92,13 @@ class Config:
     @property
     def min_density(self) -> Optional[float]:
         return self.get("validation", "min_density")
+
+    @property
+    def min_density_span(self) -> int:
+        """Extracts shorter than this are never flagged as dumps — a ratio is
+        meaningless over a handful of lines (a 4-line extract at 25% is one
+        changed line, not padding). 0 disables the floor."""
+        return int(self.get("validation", "min_density_span", 0) or 0)
 
     @property
     def max_audit_ratio(self) -> Optional[float]:

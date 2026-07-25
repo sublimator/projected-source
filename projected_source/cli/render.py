@@ -651,6 +651,8 @@ def _report_validation(
             if r.bucket != "code":
                 continue
             span = sum(e - s + 1 for s, e in r.regions)
+            if span < cfg.min_density_span:
+                continue  # too small to be a dump — ratio is unstable here
             density = (r.changed_lines / span) if span else 1.0
             if density < cfg.min_density:
                 dumps.append((r, density))
