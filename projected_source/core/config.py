@@ -91,14 +91,27 @@ class Config:
     # -- typed convenience for the wired knobs --
     @property
     def min_density(self) -> Optional[float]:
-        return self.get("validation", "min_density")
+        return self._numeric("validation", "min_density", float, None)
+
+    def _numeric(self, section: str, key: str, cast, default):
+        """Coerce a config value numerically, degrading like the loader does: a
+        malformed value is logged and treated as absent, never a traceback that
+        aborts the whole render (F: config robustness)."""
+        v = self.get(section, key)
+        if v is None:
+            return default
+        try:
+            return cast(v)
+        except (ValueError, TypeError):
+            logger.warning("ignoring non-numeric [%s] %s = %r", section, key, v)
+            return default
 
     @property
     def min_density_span(self) -> int:
         """Extracts shorter than this are never flagged as dumps — a ratio is
         meaningless over a handful of lines (a 4-line extract at 25% is one
         changed line, not padding). 0 disables the floor."""
-        return int(self.get("validation", "min_density_span", 0) or 0)
+        return self._numeric("validation", "min_density_span", int, 0) or 0
 
     @property
     def max_code_lines(self) -> Optional[int]:
@@ -106,16 +119,15 @@ class Config:
         split it into marked sub-chunks (the split manifests as //@@ markers).
         Independent of density: a 400-line extract that is 90% changed is still
         too big for one chunk. None disables the gate."""
-        v = self.get("validation", "max_code_lines")
-        return int(v) if v is not None else None
+        return self._numeric("validation", "max_code_lines", int, None)
 
     @property
     def max_audit_ratio(self) -> Optional[float]:
-        return self.get("validation", "max_audit_ratio")
+        return self._numeric("validation", "max_audit_ratio", float, None)
 
     @property
     def max_audit_changed_lines(self) -> Optional[int]:
-        return self.get("audit", "max_changed_lines")
+        return self._numeric("audit", "max_changed_lines", int, None)
 
     @property
     def scope_exclude(self) -> List[str]:

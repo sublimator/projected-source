@@ -406,6 +406,14 @@ class TemplateRenderer:
             # function splits into readable pieces WITHOUT adding new markers.
             # Resolve to a concrete (start, end) and fall through as a lines= read.
             if from_marker or to_marker:
+                # Only function/struct/lines/whole-file can be a marker-bounded
+                # base. Reject the selectors _marker_bounded_range can't clip,
+                # rather than silently ignoring the bound and dumping the symbol.
+                if function_macro or macro_definition or message or enum or service:
+                    return fail(
+                        "from_marker/to_marker only supports function=, struct=, lines=, "
+                        "or a whole-file base — not macro/message/enum/service selectors"
+                    )
                 lines = self._marker_bounded_range(
                     extractor, resolved_path, function, struct, signature, lines, from_marker, to_marker
                 )
@@ -1018,13 +1026,12 @@ class TemplateRenderer:
     @staticmethod
     def _call_symbol(extractor, method_name, path, name, signature):
         """Call extract_function/extract_struct, passing signature only if the
-        extractor's method accepts it (overload disambiguation)."""
+        extractor's method accepts it (overload disambiguation). Introspect the
+        parameter — never catch TypeError, which would swallow a real error from
+        inside the extractor and silently fall back to the first overload."""
         method = getattr(extractor, method_name)
-        if signature is not None:
-            try:
-                return method(path, name, signature=signature)
-            except TypeError:
-                pass  # extractor without signature support
+        if signature is not None and "signature" in inspect_signature(method).parameters:
+            return method(path, name, signature=signature)
         return method(path, name)
 
     def _link_function(self, target: str, text: str = None) -> str:
@@ -1038,7 +1045,12 @@ class TemplateRenderer:
         dangling link), the same way it flags a dangling edge.
         """
         label = text if text is not None else str(target)
-        return f"[{label}](#{_anchor_slug(target)})"
+        slug = _anchor_slug(target)
+        # The visible link PLUS a reader-invisible marker. The graph's
+        # dangling-link lint reads the marker, not the `](#chunk-..)` href — so a
+        # link merely *shown* in extracted source or a code block is never
+        # mistaken for an authored link() target.
+        return f"[{label}](#{slug})<!-- link to=\"{slug}\" -->"
 
     def _safe_repo_rel(self, path: Path) -> str:
         """repo-root-relative POSIX path, or the raw path if outside the repo."""

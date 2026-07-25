@@ -69,6 +69,10 @@ def graph(template: Path, repo_path: Path, topo: bool, doc: bool, tags: tuple, s
     g = extract_graph(result.text)
     cfg = load_config(template)
 
+    # A dangling link is a whole-document defect; evaluate it on the full graph
+    # so a --tag slice (which drops cross-slice link targets) can't hide it.
+    dangling_links = g.dangling_links()
+
     # A tag census names the themes before any slicing — a quick read on whether
     # the tour is balanced or lopsided.
     census = g.tags_census()
@@ -88,18 +92,17 @@ def graph(template: Path, repo_path: Path, topo: bool, doc: bool, tags: tuple, s
     )
 
     dangling = g.dangling_edges()
-    dangling_links = g.dangling_links()
     cycle = g.find_cycle()
     order, cyclic = g.topological_order()
 
     # [graph] policy from .projected-source.toml.
-    min_edges = int(cfg.get("graph", "min_edges_per_node", 0) or 0)  # numeric dial; 1 == no orphans
+    min_edges = cfg._numeric("graph", "min_edges_per_node", int, 0) or 0  # numeric dial; 1 == no orphans
     forbid_cycles = bool(cfg.get("graph", "forbid_cycles", False))
-    min_density = cfg.get("graph", "min_edge_density", None)
+    min_density = cfg._numeric("graph", "min_edge_density", float, None)
 
     degree = g.degree()
     underconnected = sorted(n for n, d in degree.items() if d < min_edges) if min_edges else g.orphans()
-    density_bad = min_density is not None and g.density() < float(min_density)
+    density_bad = min_density is not None and g.density() < min_density
 
     fail = False
 

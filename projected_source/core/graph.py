@@ -22,8 +22,10 @@ _CHUNK_OPEN_RE = re.compile(r"<!--\s*chunk\s+(.*?)-->")
 _AUDIT_OPEN_RE = re.compile(r"<!--\s*audit\s+(.*?)-->")
 _EDGE_RE = re.compile(r"<!--\s*edge\s+(.*?)-->")
 _ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
-# A rendered intra-document link, `[text](#chunk-<slug>)`, emitted by link().
-_LINK_RE = re.compile(r"\]\(#(chunk-[A-Za-z0-9_-]+)\)")
+# The reader-invisible marker link() emits next to its visible href. Reading the
+# marker (not the `](#chunk-..)` href) means a link merely SHOWN in extracted
+# source or a code block is never mistaken for an authored link() target.
+_LINK_RE = re.compile(r'<!--\s*link\s+to="(chunk-[A-Za-z0-9_-]+)"\s*-->')
 
 
 def _parse_tags(raw: str) -> Set[str]:

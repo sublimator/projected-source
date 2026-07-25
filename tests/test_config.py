@@ -109,3 +109,22 @@ def test_max_changed_lines_warns_in_report(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "max_changed_lines" in result.output          # policy warning surfaced
     assert "too much per audit" in result.output
+
+
+def test_non_numeric_config_degrades_not_crashes(tmp_path, monkeypatch):
+    """A malformed numeric knob is logged and treated as absent, never a
+    traceback that aborts the render (config robustness)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    _write(
+        tmp_path / ".projected-source.toml",
+        """
+        [validation]
+        min_density = "half"
+        max_code_lines = "twenty"
+        min_density_span = "lots"
+        """,
+    )
+    cfg = load_config(tmp_path)
+    assert cfg.min_density is None        # not a crash
+    assert cfg.max_code_lines is None
+    assert cfg.min_density_span == 0      # default floor

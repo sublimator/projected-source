@@ -75,12 +75,26 @@ def test_document_order_uses_earliest_offset_across_anchor_kinds():
 # ------------------------------------------------------------------ links
 
 def test_dangling_link_detected():
-    doc = '<!-- chunk id="a" -->see [b](#chunk-b) and [ghost](#chunk-ghost)'
+    doc = (
+        '<!-- chunk id="a" -->'
+        'see [b](#chunk-b)<!-- link to="chunk-b" --> and '
+        '[ghost](#chunk-ghost)<!-- link to="chunk-ghost" -->'
+    )
     assert extract_graph(doc).dangling_links() == ["chunk-b", "chunk-ghost"]
 
 
 def test_link_to_existing_chunk_is_not_dangling():
-    doc = '<!-- chunk id="app-owner" -->x [see it](#chunk-app-owner)'
+    doc = '<!-- chunk id="app-owner" -->x [see it](#chunk-app-owner)<!-- link to="chunk-app-owner" -->'
+    assert extract_graph(doc).dangling_links() == []
+
+
+def test_shown_link_href_without_marker_is_not_a_dangling_link():
+    """A `](#chunk-ghost)` merely shown in extracted source or a code block must
+    NOT be treated as an authored link() target (regression)."""
+    doc = (
+        '<!-- chunk id="a" -->\n'
+        '```markdown\nsee [the owner](#chunk-ghost) for details.\n```\n'
+    )
     assert extract_graph(doc).dangling_links() == []
 
 

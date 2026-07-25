@@ -918,3 +918,13 @@ def test_max_code_lines_flags_oversized_extract(tmp_path, monkeypatch):
     out = _strip_ansi(result.output)
     assert "over max_code_lines 25" in out, out
     assert "43 lines" in out  # 40 body + signature + open/close brace lines
+
+
+def test_marker_bounds_reject_unsupported_selector(tmp_path):
+    """from_marker/to_marker with enum=/message=/etc must fail loud, not
+    silently drop the bound and dump the whole symbol."""
+    (tmp_path / "f.cpp").write_text("enum Color { Red, Green, Blue };\n")
+    r = TemplateRenderer(template_dir=tmp_path, repo_path=tmp_path)
+    out = r._code_function("f.cpp", enum="Color", to_marker="m", github=False)
+    assert "❌" in out
+    assert "from_marker/to_marker only supports" in out
