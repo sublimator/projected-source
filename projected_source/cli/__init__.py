@@ -12,6 +12,7 @@ from .audit_stubs import audit_stubs
 from .bug_report import bug_report
 from .check import check
 from .find_markers import find_markers
+from .graph import graph
 from .list_symbols import list_functions
 from .render import render
 
@@ -38,6 +39,7 @@ cli.add_command(ai_guide)
 cli.add_command(audit_stubs)
 cli.add_command(bug_report)
 cli.add_command(find_markers)
+cli.add_command(graph)
 cli.add_command(list_functions)
 
 

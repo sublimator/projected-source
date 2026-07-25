@@ -137,12 +137,19 @@ class ChunkExtension(Extension):
         body = parser.parse_statements(["name:endchunk"], drop_needle=True)
         return nodes.CallBlock(self.call_method("_render_chunk", [], kwargs), [], [], body).set_lineno(lineno)
 
-    def _render_chunk(self, id=None, caller=None):
+    def _render_chunk(self, id=None, tags=None, caller=None):
         body = caller()
         if not id:
             return body
-        safe = str(id).replace('"', "&quot;").replace("-->", "--&gt;")
-        return f'<!-- chunk id="{safe}" -->\n{body}\n<!-- /chunk id="{safe}" -->'
+
+        def esc(v):
+            return str(v).replace('"', "&quot;").replace("-->", "--&gt;")
+
+        attrs = f'id="{esc(id)}"'
+        if tags:
+            tagstr = ",".join(str(t) for t in tags) if isinstance(tags, (list, tuple)) else str(tags)
+            attrs += f' tags="{esc(tagstr)}"'
+        return f'<!-- chunk {attrs} -->\n{body}\n<!-- /chunk id="{esc(id)}" -->'
 
 
 def _collect_error_fixture(file_path: Path, error: str, template_context: str = None):
@@ -207,6 +214,7 @@ class TemplateRenderer:
         self.env.globals["ghc"] = self._code_function  # Alias for compatibility
         self.env.globals["ignore_changes"] = self._ignore_changes_function
         self.env.globals["audit"] = self._audit_function
+        self.env.globals["relate"] = self._relate_function
         self.env.globals["include"] = self._include_function
         self.env.globals["include_body"] = self._include_body_function
         self.env.globals["set_code_context"] = self._set_code_context_function
@@ -238,6 +246,7 @@ class TemplateRenderer:
         enclosure: str = None,
         enclosure_context: int = None,
         id: str = None,
+        tags=None,
     ) -> str:
         """
         Universal code extraction function for templates.
@@ -677,7 +686,11 @@ class TemplateRenderer:
             if id:
                 # A reader-invisible anchor so the chunk is addressable as a
                 # graph node (the id seed; edges/validation grow later).
-                block = f'<!-- chunk id="{self._escape_comment_value(id)}" -->\n{block}'
+                anchor = self._comment_attr("id", id)
+                tagstr = self._format_tags(tags)
+                if tagstr:
+                    anchor += " " + self._comment_attr("tags", tagstr)
+                block = f"<!-- chunk {anchor} -->\n{block}"
             return block
 
         except Exception as e:
@@ -903,6 +916,29 @@ class TemplateRenderer:
     def _comment_attr(self, key: str, value) -> str:
         return f'{key}="{self._escape_comment_value(value)}"'
 
+    @staticmethod
+    def _format_tags(tags) -> Optional[str]:
+        """A comma-joined tag string, or None. Accepts a list or a plain string."""
+        if not tags:
+            return None
+        return ",".join(str(t) for t in tags) if isinstance(tags, (list, tuple)) else str(tags)
+
+    def _relate_function(self, source: str, kind: str, target: str, label: str = None) -> str:
+        """Declare a directed edge between two chunk ids for the chunk graph.
+
+        Emits a reader-invisible `<!-- edge from=.. type=.. to=.. -->` the `graph`
+        command reads back to find orphans, cycles, and a topological order.
+        Declaring the relationships is the point — it forces structure over a dump.
+        """
+        parts = [
+            self._comment_attr("from", source),
+            self._comment_attr("type", kind),
+            self._comment_attr("to", target),
+        ]
+        if label:
+            parts.append(self._comment_attr("label", label))
+        return f"<!-- edge {' '.join(parts)} -->"
+
     def _safe_repo_rel(self, path: Path) -> str:
         """repo-root-relative POSIX path, or the raw path if outside the repo."""
         try:
@@ -991,6 +1027,7 @@ class TemplateRenderer:
         minus: Union[Dict, List[Dict]] = None,
         committed: bool = False,
         id: str = None,
+        tags=None,
     ) -> str:
         """Acknowledge a changed region in the audit trail without narrating it.
 
@@ -1039,6 +1076,9 @@ class TemplateRenderer:
             attrs = [self._comment_attr("file", self._safe_repo_rel(resolved_path)), 'scope="whole-file"']
             if id:
                 attrs.append(self._comment_attr("id", id))
+            _tags = self._format_tags(tags)
+            if _tags:
+                attrs.append(self._comment_attr("tags", _tags))
             if active_ref:
                 attrs.append(self._comment_attr("ref", active_ref))
             attrs.append(self._comment_attr("reason", clean_reason))
@@ -1142,6 +1182,9 @@ class TemplateRenderer:
             ]
             if id:
                 attrs.append(self._comment_attr("id", id))
+            _tags = self._format_tags(tags)
+            if _tags:
+                attrs.append(self._comment_attr("tags", _tags))
             if lines is None:
                 attrs.extend(
                     self._audit_selector_attrs(
