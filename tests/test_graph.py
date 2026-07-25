@@ -100,11 +100,13 @@ def test_shown_link_href_without_marker_is_not_a_dangling_link():
 
 def test_graph_slug_matches_renderer_anchor_slug():
     """The dangling-link lint compares link() targets to renderer anchors; the
-    two slug functions must not drift."""
+    two slug functions must not drift. The graph receives the id AFTER
+    comment-escaping (as _ATTR_RE parses it back), so the real invariant is
+    _slug(comment_safe(raw)) == _anchor_slug(raw) — including degenerate ids."""
     from projected_source.core.graph import _slug
-    from projected_source.core.renderer import _anchor_slug
-    for s in ["app-owner", "a b c", "weird/id!", "x", "Mixed_Case-1"]:
-        assert _slug(s) == _anchor_slug(s)
+    from projected_source.core.renderer import _anchor_slug, _comment_safe
+    for raw in ["app-owner", "a b c", "weird/id!", "x", "Mixed_Case-1", 'a"b', "x-->y"]:
+        assert _slug(_comment_safe(raw)) == _anchor_slug(raw), raw
 
 
 def test_graph_command_flags_dangling_link(tmp_path):

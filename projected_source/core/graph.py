@@ -35,8 +35,16 @@ def _parse_tags(raw: str) -> Set[str]:
 def _slug(chunk_id: str) -> str:
     """Anchor slug for a chunk id. MUST match renderer._anchor_slug — the
     dangling-link lint compares link targets against these (a drift test pins
-    the two together)."""
-    s = re.sub(r"[^A-Za-z0-9_-]+", "-", str(chunk_id)).strip("-")
+    the two together). The id arrives here parsed from a comment attribute, where
+    comment-unsafe characters were escaped; undo that first so a degenerate id
+    (containing `"` or `-->`) slugs to the same anchor the renderer emitted."""
+    raw = (
+        str(chunk_id)
+        .replace("--!&gt;", "--!>")
+        .replace("--&gt;", "-->")
+        .replace("&quot;", '"')
+    )
+    s = re.sub(r"[^A-Za-z0-9_-]+", "-", raw).strip("-")
     return f"chunk-{s}"
 
 
