@@ -4,7 +4,6 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from projected_source.cli.render import render

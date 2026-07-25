@@ -19,9 +19,9 @@ from watchfiles import DefaultFilter, watch
 
 from ..core.changes_set import ChangesSet, code_display_overlaps
 from ..core.config import load_config
-from ..core.review_scope import ReviewScopeError, extract_review_scope, read_template_scope
 from ..core.html import default_html_output, markdown_to_html
 from ..core.renderer import TemplateRenderer
+from ..core.review_scope import ReviewScopeError, extract_review_scope, read_template_scope
 from .helpers import FixtureCollector, console, get_fixture_collector, set_fixture_collector
 
 
@@ -589,7 +589,8 @@ def _report_validation(
     # --strict having verified almost nothing.
     out_of_scope = changes_set.out_of_scope_line_count()
     if out_of_scope:
-        console.print(f"  [dim]({out_of_scope} changed line{'' if out_of_scope == 1 else 's'} outside review_scope)[/dim]")
+        plural = "" if out_of_scope == 1 else "s"
+        console.print(f"  [dim]({out_of_scope} changed line{plural} outside review_scope)[/dim]")
     unmatched = changes_set.unmatched_includes()
     if unmatched:
         console.print(

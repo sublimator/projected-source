@@ -903,7 +903,7 @@ def test_max_code_lines_flags_oversized_extract(tmp_path, monkeypatch):
     ).stdout.strip()
     # touch every line so density is high — the gate must still fire on span
     (repo / "file.cpp").write_text(
-        f"int big() {{\n" + "\n".join(f"    int a{i} = {i + 1};" for i in range(40)) + "\n    return a0;\n}\n"
+        "int big() {\n" + "\n".join(f"    int a{i} = {i + 1};" for i in range(40)) + "\n    return a0;\n}\n"
     )
     subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, check=True)
     subprocess.run(["git", "commit", "-m", "change"], cwd=repo, capture_output=True, check=True)

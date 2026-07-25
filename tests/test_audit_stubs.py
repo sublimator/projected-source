@@ -7,7 +7,6 @@ post-render leftover the audit_remaining() template directive could not compute.
 
 import re
 import subprocess
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner

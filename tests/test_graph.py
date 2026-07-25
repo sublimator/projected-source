@@ -1,7 +1,6 @@
 """Tests for the chunk graph — extraction + orphan/cycle/topo analysis, and the
 `graph` CLI command."""
 
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner

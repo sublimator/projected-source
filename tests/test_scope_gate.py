@@ -5,7 +5,6 @@ checked — which the round-1 F3 fix got half-right in both directions.
 """
 
 import subprocess
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner

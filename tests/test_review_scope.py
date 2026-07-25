@@ -8,13 +8,11 @@ error; an include that matches nothing is surfaced so an empty scope cannot pass
 """
 
 import subprocess
-from pathlib import Path
 
 import pytest
 
 from projected_source.core.changes_set import ChangesSet
 from projected_source.core.review_scope import ReviewScopeError, extract_review_scope
-
 
 # ---------------------------------------------------------------- extractor
 

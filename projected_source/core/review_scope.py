@@ -10,7 +10,7 @@ See .ai-docs/specs/audit-verb-and-change-partition.md §5.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import jinja2
 from jinja2 import nodes

@@ -67,7 +67,11 @@ class ChunkGraph:
     ):
         self.nodes = set(nodes)
         self.edges = list(edges)
-        self.node_tags: Dict[str, Set[str]] = {n: set(node_tags.get(n, set())) for n in self.nodes} if node_tags else {n: set() for n in self.nodes}
+        self.node_tags: Dict[str, Set[str]] = (
+            {n: set(node_tags.get(n, set())) for n in self.nodes}
+            if node_tags
+            else {n: set() for n in self.nodes}
+        )
         # Reading order — the sequence anchors appear in the document. Falls back
         # to a stable sort so callers always get every node exactly once.
         seen = [n for n in (document_order or []) if n in self.nodes]

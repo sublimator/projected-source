@@ -1162,7 +1162,9 @@ class TemplateRenderer:
             # Collapse here (S1) since _escape_comment_value no longer does (N12).
             message = re.sub(r"\s+", " ", str(message)).strip()
             self._errors.append(CodeError(message, file_path, None))
-            return f'<!-- audit-error {self._comment_attr("file", file_path)} {self._comment_attr("error", message)} -->'
+            file_attr = self._comment_attr("file", file_path)
+            error_attr = self._comment_attr("error", message)
+            return f"<!-- audit-error {file_attr} {error_attr} -->"
 
         clean_reason = self._sanitize_audit_reason(reason)
         if clean_reason is None:
