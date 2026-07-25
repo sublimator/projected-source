@@ -18,6 +18,7 @@ from rich.markup import escape
 from watchfiles import DefaultFilter, watch
 
 from ..core.changes_set import ChangesSet
+from ..core.review_scope import ReviewScopeError, read_template_scope
 from ..core.html import default_html_output, markdown_to_html
 from ..core.renderer import TemplateRenderer
 from .helpers import FixtureCollector, console, get_fixture_collector, set_fixture_collector
@@ -358,8 +359,26 @@ def render(
         if changes_base:
             # "auto" means auto-detect base
             base = None if changes_base == "auto" else changes_base
+
+            # review_scope: a single entry template may declare its own base and
+            # include/exclude globs. Read before from_diff (§5). Precedence for
+            # base: explicit CLI -V > template review_scope.base > auto-detect.
+            include = exclude = None
+            if not input_is_stdin and not input_is_dir:
+                try:
+                    scope = read_template_scope(input_path)
+                except ReviewScopeError as e:
+                    console.print(f"[red]✗ Invalid review_scope: {escape(str(e))}[/red]")
+                    sys.exit(1)
+                if scope:
+                    include, exclude = scope["include"], scope["exclude"]
+                    if base is None and scope["base"]:
+                        base = scope["base"]
+
             try:
-                changes_set = ChangesSet.from_diff(base=base, repo_path=effective_repo_path)
+                changes_set = ChangesSet.from_diff(
+                    base=base, repo_path=effective_repo_path, include=include, exclude=exclude
+                )
                 if base and ".." in base:
                     range_display = base
                 else:
@@ -484,6 +503,17 @@ def _report_validation(changes_set, effective_repo_path: Path, strict: bool) -> 
     console.print(f"  narrated {buckets['code']:>6}")
     console.print(f"  audited  {buckets['audit']:>6}")
     console.print(f"  ignored  {buckets['ignore']:>6}")
+
+    # H5: make review_scope's effect visible so an over-narrow scope cannot pass
+    # --strict having verified almost nothing.
+    out_of_scope = changes_set.out_of_scope_line_count()
+    if out_of_scope:
+        console.print(f"  [dim]({out_of_scope} changed line{'' if out_of_scope == 1 else 's'} outside review_scope)[/dim]")
+    unmatched = changes_set.unmatched_includes()
+    if unmatched:
+        console.print(
+            f"  [yellow]review_scope include matched no changes: {escape(', '.join(unmatched))}[/yellow]"
+        )
 
     # M3: an audit()/ignore_changes() claim that matched no changed line at all
     # (typo'd selector, stale symbol, or an out-of-scope path) is a durable

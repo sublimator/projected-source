@@ -11,6 +11,7 @@ change — requiring them would force documentation to match the shape of the
 unified diff rather than the edit itself.
 """
 
+import fnmatch
 import re
 import subprocess
 from dataclasses import dataclass
@@ -114,9 +115,24 @@ class ChangesSet:
         # denominators stay recoverable.
         self._d_snapshot: Dict[Path, List[Tuple[int, int]]] = {}
         self._d_line_count: int = 0
+        # review_scope: globs restricting which files' changes are obligations.
+        # Matched against the diff-relative POSIX path (never the absolute
+        # _regions key, which can raise for an out-of-repo root — M1). The
+        # defaults include everything, so an unscoped ChangesSet is unchanged.
+        self._include: List[str] = ["**"]
+        self._exclude: List[str] = []
+        self._include_hits: Dict[str, int] = {}
+        self._out_of_scope_lines: int = 0
+        self._current_out_of_scope: bool = False
 
     @classmethod
-    def from_diff(cls, base: Optional[str] = None, repo_path: Optional[Path] = None) -> "ChangesSet":
+    def from_diff(
+        cls,
+        base: Optional[str] = None,
+        repo_path: Optional[Path] = None,
+        include: Optional[List[str]] = None,
+        exclude: Optional[List[str]] = None,
+    ) -> "ChangesSet":
         """
         Build a ChangesSet from git diff against a base commit or range.
 
@@ -124,9 +140,12 @@ class ChangesSet:
             base: Base commit/branch, or a range like "HEAD~5..HEAD~2".
                   If no ".." present, diffs against HEAD. Auto-detected if None.
             repo_path: Path to git repository. Uses cwd if None.
+            include: review_scope globs; only changed files whose diff-relative
+                     POSIX path matches one are obligations (default: all).
+            exclude: review_scope globs applied after include.
 
         Returns:
-            ChangesSet populated with all changed regions.
+            ChangesSet populated with all changed regions in scope.
         """
         repo_path = repo_path or Path.cwd()
         base = base or cls.detect_base(repo_path)
@@ -135,6 +154,11 @@ class ChangesSet:
         diff_range = base if ".." in base else f"{base}..HEAD"
 
         changes = cls()
+        if include is not None:
+            changes._include = list(include)
+        if exclude is not None:
+            changes._exclude = list(exclude)
+        changes._include_hits = {p: 0 for p in changes._include}
 
         # Get diff with file names and line numbers. quotePath=false keeps
         # non-ASCII paths as raw UTF-8 instead of C-quoted octal escapes,
@@ -228,6 +252,11 @@ class ChangesSet:
                     # Added/replacement line - needs coverage
                     if current_file:
                         self.add(current_file, current_new_line, current_new_line)
+                    elif self._current_out_of_scope:
+                        # A real change we dropped because review_scope excluded
+                        # its file — tallied so the report can say how much scope
+                        # removed (H5), rather than passing --strict silently.
+                        self._out_of_scope_lines += 1
                     current_new_line += 1
                     new_remaining -= 1
                 elif line.startswith("-"):
@@ -242,17 +271,17 @@ class ChangesSet:
 
             # New file header: +++ b/path/to/file
             if line.startswith("+++ b/"):
-                file_path = line[6:]  # Strip "+++ b/"
-                current_file = repo_path / file_path
+                current_file = self._scoped_file(repo_path, line[6:])  # Strip "+++ b/"
             # C-quoted header: +++ "b/path with \303\251scapes". Git quotes
             # paths with control characters even under quotePath=false.
             elif line.startswith('+++ "b/'):
-                current_file = repo_path / self._unquote_git_path(line[4:])
+                current_file = self._scoped_file(repo_path, self._unquote_git_path(line[4:]))
             # Anything else ('+++ /dev/null' for a deleted file, or an
             # unrecognized header form) must never attribute the following
             # hunk lines to the previous file.
             elif line.startswith("+++ "):
                 current_file = None
+                self._current_out_of_scope = False
 
             # Hunk header: @@ -old_start,old_count +new_start,new_count @@
             else:
@@ -261,6 +290,25 @@ class ChangesSet:
                     current_new_line = int(match.group(3))
                     old_remaining = int(match.group(2)) if match.group(2) else 1
                     new_remaining = int(match.group(4)) if match.group(4) else 1
+
+    def _scoped_file(self, repo_path: Path, rel: str) -> Optional[Path]:
+        """Absolute path if `rel` is in review_scope, else None.
+
+        Matches the diff-relative POSIX path against the include/exclude globs
+        (fnmatch semantics: '*' spans separators, so 'src/**' covers any depth).
+        Updates the per-pattern hit tally and the in-scope flag used to count
+        out-of-scope changed lines.
+        """
+        rel_posix = Path(rel).as_posix()
+        matched = [p for p in self._include if fnmatch.fnmatch(rel_posix, p)]
+        for p in matched:
+            self._include_hits[p] = self._include_hits.get(p, 0) + 1
+        excluded = any(fnmatch.fnmatch(rel_posix, p) for p in self._exclude)
+        if matched and not excluded:
+            self._current_out_of_scope = False
+            return repo_path / rel
+        self._current_out_of_scope = True
+        return None
 
     _GIT_PATH_ESCAPES = {
         "a": "\a",
@@ -424,8 +472,21 @@ class ChangesSet:
         return bucket_lines, records
 
     def changed_line_count(self) -> int:
-        """Total changed lines in D (the obligation set)."""
+        """Total changed lines in D (the obligation set, after scope)."""
         return self._d_line_count
+
+    def out_of_scope_line_count(self) -> int:
+        """Changed lines dropped because review_scope excluded their file (H5)."""
+        return self._out_of_scope_lines
+
+    def unmatched_includes(self) -> List[str]:
+        """review_scope include globs that matched no changed file (H5).
+
+        A non-default include that matches nothing usually means a typo'd glob
+        silently narrowing the gate to nothing — worth surfacing so an empty
+        scope cannot pass --strict having verified nothing.
+        """
+        return [p for p, hits in self._include_hits.items() if hits == 0 and p != "**"]
 
     def uncovered(self) -> List[ChangeRegion]:
         """Return list of regions not yet claimed by documentation."""
