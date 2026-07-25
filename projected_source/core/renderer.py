@@ -172,6 +172,7 @@ class TemplateRenderer:
         self.env.globals["code"] = self._code_function
         self.env.globals["ghc"] = self._code_function  # Alias for compatibility
         self.env.globals["ignore_changes"] = self._ignore_changes_function
+        self.env.globals["audit"] = self._audit_function
         self.env.globals["include"] = self._include_function
         self.env.globals["include_body"] = self._include_body_function
         self.env.globals["set_code_context"] = self._set_code_context_function
@@ -776,6 +777,306 @@ class TemplateRenderer:
                 tmp_file.unlink()
 
         return ""
+
+    # ------------------------------------------------------------------ audit()
+
+    def _extract_region_extents(
+        self,
+        extractor,
+        extract_path: Path,
+        *,
+        function=None,
+        signature=None,
+        struct=None,
+        var=None,
+        function_macro=None,
+        macro_definition=None,
+        marker=None,
+        lines=None,
+        message=None,
+        enum=None,
+        service=None,
+    ) -> Tuple[int, int]:
+        """Resolve a (start_line, end_line) span from any code()-style selector.
+
+        Shared by ignore_changes() and audit(); mirrors the dispatch in
+        _code_function so the three verbs agree on what a selector points at.
+        """
+        if function:
+            _, start_line, end_line = extractor.extract_function(extract_path, function, signature)
+        elif function_macro:
+            macro_spec = {"name": function_macro} if isinstance(function_macro, str) else function_macro
+            _, start_line, end_line = extractor.extract_function_macro(extract_path, macro_spec)
+        elif macro_definition:
+            _, start_line, end_line = extractor.extract_macro_definition(extract_path, macro_definition)
+        elif var:
+            if hasattr(extractor, "extract_variable"):
+                _, start_line, end_line = extractor.extract_variable(extract_path, var)
+            else:
+                _, start_line, end_line = extractor.extract_struct(extract_path, var)
+        elif struct:
+            _, start_line, end_line = extractor.extract_struct(extract_path, struct)
+        elif message:
+            _, start_line, end_line = extractor.extract_message(extract_path, message)
+        elif enum:
+            _, start_line, end_line = extractor.extract_enum(extract_path, enum)
+        elif service:
+            _, start_line, end_line = extractor.extract_service(extract_path, service)
+        elif marker:
+            _, start_line, end_line = extractor.extract_marker(extract_path, marker)
+            start_line, end_line = self._widen_to_marker_delimiters(extract_path, start_line, end_line)
+        elif lines:
+            start_line, end_line = lines
+        else:
+            raise ValueError("no extraction selector")
+        return start_line, end_line
+
+    @staticmethod
+    def _sanitize_audit_reason(reason) -> Optional[str]:
+        """Normalize a reason to a single stripped line, or None if empty.
+
+        Escaping for HTML-comment safety happens later in _comment_attr; here we
+        only collapse whitespace/newlines and bound the length so the trail stays
+        one greppable line per note.
+        """
+        if reason is None:
+            return None
+        collapsed = re.sub(r"\s+", " ", str(reason)).strip()
+        if not collapsed:
+            return None
+        if len(collapsed) > 400:
+            collapsed = collapsed[:399].rstrip() + "…"
+        return collapsed
+
+    @staticmethod
+    def _escape_comment_value(value: str) -> str:
+        """Make a string safe inside key="value" within an HTML comment.
+
+        Escapes the attribute/comment-hostile characters and collapses any run
+        of '-' (a bare '--' is invalid inside an HTML comment, and '-->' would
+        terminate it early — H1).
+        """
+        out = (
+            str(value)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+        return re.sub(r"-{2,}", "-", out)
+
+    def _comment_attr(self, key: str, value) -> str:
+        return f'{key}="{self._escape_comment_value(value)}"'
+
+    def _safe_repo_rel(self, path: Path) -> str:
+        """repo-root-relative POSIX path, or the raw path if outside the repo."""
+        try:
+            rel = path.relative_to(self.repo_path) if path.is_absolute() else path
+        except ValueError:
+            rel = path
+        return rel.as_posix()
+
+    def _audit_selector_attrs(
+        self,
+        *,
+        function=None,
+        signature=None,
+        struct=None,
+        var=None,
+        function_macro=None,
+        macro_definition=None,
+        marker=None,
+        message=None,
+        enum=None,
+        service=None,
+    ) -> List[str]:
+        """Render the symbolic selector as comment attributes (H7).
+
+        The selector re-resolves after a refactor even when the raw line
+        extents have moved, which is the whole point of a durable trail in a
+        tool built on symbolic references. lines= carries no selector attr — its
+        display `lines=` is already the selector.
+        """
+        attrs: List[str] = []
+        if function:
+            attrs.append(self._comment_attr("function", function))
+            if signature:
+                attrs.append(self._comment_attr("signature", signature))
+        if struct:
+            attrs.append(self._comment_attr("struct", struct))
+        if var:
+            attrs.append(self._comment_attr("var", var))
+        if marker:
+            attrs.append(self._comment_attr("marker", marker))
+        if macro_definition:
+            attrs.append(self._comment_attr("macro_definition", macro_definition))
+        if function_macro:
+            name = function_macro if isinstance(function_macro, str) else function_macro.get("name", "")
+            attrs.append(self._comment_attr("function_macro", name))
+        if message:
+            attrs.append(self._comment_attr("message", message))
+        if enum:
+            attrs.append(self._comment_attr("enum", enum))
+        if service:
+            attrs.append(self._comment_attr("service", service))
+        return attrs
+
+    def _audit_function(
+        self,
+        file_path: str,
+        reason: str = None,
+        function: str = None,
+        struct: str = None,
+        var: str = None,
+        function_macro: Union[str, Dict] = None,
+        macro_definition: str = None,
+        lines: Tuple[int, int] = None,
+        marker: str = None,
+        signature: str = None,
+        message: str = None,
+        enum: str = None,
+        service: str = None,
+        ref: str = None,
+        root: str = None,
+    ) -> str:
+        """Acknowledge a changed region in the audit trail without narrating it.
+
+        Emits a reader-invisible, persistent HTML comment
+        `<!-- audit file="…" lines="…" <selector> reason="…" -->` and, under -V,
+        claims coverage for the region exactly as ignore_changes() does. Two
+        deliberate differences from ignore_changes():
+
+        - The note is emitted **even without -V**, and its coordinates never
+          depend on the ChangesSet, so `check`'s no-`-V` re-render is
+          byte-identical (freshness stays green).
+        - `reason` is **mandatory and non-empty after sanitization**. A missing
+          or empty reason degrades to a visible failed-audit marker and a
+          structural CodeError (so `check` reports broken and --strict fails),
+          never a silent drop.
+        """
+
+        def fail(message: str) -> str:
+            self._errors.append(CodeError(message, file_path, None))
+            return f'<!-- audit-error {self._comment_attr("file", file_path)} {self._comment_attr("error", message)} -->'
+
+        clean_reason = self._sanitize_audit_reason(reason)
+        if clean_reason is None:
+            return fail("audit() requires a non-empty reason")
+
+        # code_root prefix (via {% code_context %}) + active ref, same as code()/ignore_changes()
+        code_root = str(self.env.globals.get("code_root", ""))
+        effective_path = file_path
+        if code_root and not Path(effective_path).is_absolute():
+            effective_path = str(Path(code_root) / effective_path)
+        active_ref = ref or str(self.env.globals.get("code_ref", ""))
+
+        resolved_path = Path(effective_path)
+        if not resolved_path.is_absolute():
+            resolved_path = self.repo_path / resolved_path
+
+        has_spec = any(
+            [function, struct, var, function_macro, macro_definition, lines, marker, message, enum, service]
+        )
+
+        # Whole-file audit: claim everything, no line extents in the note.
+        if not has_spec:
+            if self.changes_set is not None:
+                self.changes_set.subtract(resolved_path, 1, 999999)
+            attrs = [self._comment_attr("file", self._safe_repo_rel(resolved_path)), 'scope="whole-file"']
+            if active_ref:
+                attrs.append(self._comment_attr("ref", active_ref))
+            attrs.append(self._comment_attr("reason", clean_reason))
+            return f"<!-- audit {' '.join(attrs)} -->"
+
+        tmp_file = None
+        try:
+            extract_path = resolved_path
+            if active_ref:
+                rel_path = effective_path
+                try:
+                    rel_path = str(Path(effective_path).relative_to(self.repo_path))
+                except ValueError:
+                    rel_path = effective_path
+                content = subprocess.check_output(
+                    ["git", "show", f"{active_ref}:{rel_path}"],
+                    cwd=self.repo_path,
+                    stderr=subprocess.DEVNULL,
+                )
+                tmp_file = Path(tempfile.mktemp(suffix=resolved_path.suffix))
+                tmp_file.write_bytes(content)
+                extract_path = tmp_file
+
+            extractor = get_extractor(extract_path)
+            start_line, end_line = self._extract_region_extents(
+                extractor,
+                extract_path,
+                function=function,
+                signature=signature,
+                struct=struct,
+                var=var,
+                function_macro=function_macro,
+                macro_definition=macro_definition,
+                marker=marker,
+                lines=lines,
+                message=message,
+                enum=enum,
+                service=service,
+            )
+
+            # Claim coverage with the same coordinate discipline as code()/ignore_changes().
+            if self.changes_set is not None:
+                if active_ref:
+                    if self._ref_is_changes_target(active_ref):
+                        self.changes_set.subtract(resolved_path, start_line, end_line)
+                    else:
+                        logger.warning(
+                            f"audit ref='{active_ref}' is not the validated range's destination "
+                            f"commit; not claiming coverage for {effective_path}"
+                        )
+                else:
+                    committed_start = self.github.map_to_committed_line(resolved_path, start_line)
+                    committed_end = self.github.map_to_committed_line(resolved_path, end_line)
+                    self.changes_set.subtract(resolved_path, committed_start, committed_end)
+
+            # Emitted extents are the DISPLAYED coordinates — never the committed
+            # coverage coordinates — so the note is identical with or without -V
+            # (B5: check freshness). remap_dirty_lines mirrors code()'s header.
+            display_start, display_end = start_line, end_line
+            if self.remap_dirty_lines and not active_ref:
+                display_start = self.github.map_to_committed_line(resolved_path, start_line)
+                display_end = self.github.map_to_committed_line(resolved_path, end_line)
+
+            lines_str = f"{display_start}" if display_start == display_end else f"{display_start}-{display_end}"
+            attrs = [
+                self._comment_attr("file", self._safe_repo_rel(resolved_path)),
+                self._comment_attr("lines", lines_str),
+            ]
+            if lines is None:
+                attrs.extend(
+                    self._audit_selector_attrs(
+                        function=function,
+                        signature=signature,
+                        struct=struct,
+                        var=var,
+                        function_macro=function_macro,
+                        macro_definition=macro_definition,
+                        marker=marker,
+                        message=message,
+                        enum=enum,
+                        service=service,
+                    )
+                )
+            if active_ref:
+                attrs.append(self._comment_attr("ref", active_ref))
+            attrs.append(self._comment_attr("reason", clean_reason))
+            return f"<!-- audit {' '.join(attrs)} -->"
+
+        except Exception as e:
+            return fail(f"audit extraction failed: {e}")
+
+        finally:
+            if tmp_file and tmp_file.exists():
+                tmp_file.unlink()
 
     @pass_context
     def _include_function(self, context, path: str) -> str:

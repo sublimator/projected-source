@@ -1,0 +1,197 @@
+"""Tests for audit() — the third change-handling verb.
+
+audit() acknowledges a changed region in a persistent, reader-invisible
+`<!-- audit ... -->` note carrying a mandatory reason, and claims -V coverage
+the same way ignore_changes() does. Unlike ignore_changes(): the note is always
+emitted and its coordinates never depend on -V (so `check` stays stable), the
+reason is mandatory (empty -> a visible failure, never a silent drop), and the
+note carries the symbolic selector so it survives refactoring.
+"""
+
+import re
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from projected_source.core.changes_set import ChangesSet
+from projected_source.core.renderer import TemplateRenderer
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def _commit(repo: Path, message: str) -> str:
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", message)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+@pytest.fixture
+def repo(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@test.com")
+    _git(repo, "config", "user.name", "Test")
+    return repo
+
+
+def _render(repo: Path, tmp_path: Path, template_text: str, changes: ChangesSet = None):
+    template_dir = tmp_path / "templates"
+    template_dir.mkdir(exist_ok=True)
+    (template_dir / "doc.md.j2").write_text(template_text)
+    renderer = TemplateRenderer(
+        template_dir=template_dir, repo_path=repo, changes_set=changes
+    )
+    return renderer.render_result("doc.md.j2")
+
+
+def _first_note(text: str) -> str:
+    m = re.search(r"<!-- audit(?:-error)?\b.*?-->", text, re.DOTALL)
+    assert m, f"no audit note in: {text!r}"
+    return m.group(0)
+
+
+# --------------------------------------------------------------------- shape
+
+def test_note_shape_and_selector(repo, tmp_path):
+    (repo / "f.cpp").write_text("int foo() {\n    return 1;\n}\n")
+    _commit(repo, "init")
+    result = _render(
+        repo, tmp_path,
+        '{{ audit("f.cpp", function="foo", reason="boilerplate, covered elsewhere") }}',
+    )
+    assert result.ok
+    note = _first_note(result.text)
+    assert note.startswith("<!-- audit ")
+    assert note.endswith(" -->")
+    assert 'file="f.cpp"' in note
+    assert re.search(r'lines="\d+-\d+"', note)
+    assert 'function="foo"' in note              # H7: selector carried
+    assert 'reason="boilerplate, covered elsewhere"' in note
+
+
+def test_lines_selector_has_no_duplicate_attr(repo, tmp_path):
+    (repo / "f.cpp").write_text("a\nb\nc\nd\ne\n")
+    _commit(repo, "init")
+    note = _first_note(
+        _render(repo, tmp_path, '{{ audit("f.cpp", lines=(2, 4), reason="x") }}').text
+    )
+    assert 'lines="2-4"' in note
+    # lines= is its own selector; no second selector attribute is emitted
+    assert note.count("lines=") == 1
+
+
+def test_whole_file_audit(repo, tmp_path):
+    (repo / "gen.txt").write_text("one\ntwo\n")
+    _commit(repo, "init")
+    note = _first_note(
+        _render(repo, tmp_path, '{{ audit("gen.txt", reason="generated file") }}').text
+    )
+    assert 'scope="whole-file"' in note
+    assert "lines=" not in note
+
+
+# ----------------------------------------------------------------- sanitize
+
+def test_reason_is_html_comment_safe(repo, tmp_path):
+    (repo / "f.cpp").write_text("a\nb\nc\n")
+    _commit(repo, "init")
+    nasty = 'drain loop -- see PR --> follow-up; while (n --> 0); tag <x> "q" & z'
+    note = _first_note(
+        _render(repo, tmp_path, f'{{{{ audit("f.cpp", lines=(1, 2), reason={nasty!r}) }}}}').text
+    )
+    assert note.startswith("<!-- ") and note.endswith(" -->")
+    inner = note[len("<!-- "): -len(" -->")]   # content between opener and terminator
+    assert "-->" not in inner                  # cannot terminate the comment early
+    assert "--" not in inner                   # no bare double-hyphen (invalid in HTML comments)
+    assert "&gt;" in note and "&lt;" in note and "&quot;" in note and "&amp;" in note
+
+
+def test_reason_collapses_newlines(repo, tmp_path):
+    (repo / "f.cpp").write_text("a\nb\n")
+    _commit(repo, "init")
+    note = _first_note(
+        _render(repo, tmp_path, '{{ audit("f.cpp", lines=(1, 1), reason="line one\\nline two") }}').text
+    )
+    assert "\n" not in note
+    assert 'reason="line one line two"' in note
+
+
+# ---------------------------------------------------------- mandatory reason
+
+@pytest.mark.parametrize("call", [
+    '{{ audit("f.cpp", lines=(1, 1)) }}',                 # absent
+    '{{ audit("f.cpp", lines=(1, 1), reason="") }}',      # empty
+    '{{ audit("f.cpp", lines=(1, 1), reason="   ") }}',   # whitespace only
+])
+def test_mandatory_reason_fails_visibly(repo, tmp_path, call):
+    (repo / "f.cpp").write_text("a\nb\n")
+    _commit(repo, "init")
+    result = _render(repo, tmp_path, call)
+    assert not result.ok                                  # structural CodeError -> check reports broken
+    assert "audit-error" in result.text                   # visible, not a silent drop
+    assert any("non-empty reason" in str(e) for e in result.errors)
+
+
+def test_failed_extraction_is_visible_not_silent(repo, tmp_path):
+    (repo / "f.cpp").write_text("int foo() {\n    return 1;\n}\n")
+    _commit(repo, "init")
+    result = _render(
+        repo, tmp_path,
+        '{{ audit("f.cpp", function="does_not_exist", reason="x") }}',
+    )
+    assert not result.ok
+    assert "audit-error" in result.text                   # contrast: ignore_changes swallows silently
+
+
+# ------------------------------------------------------- check-stable (B5)
+
+def test_extents_identical_with_and_without_V(repo, tmp_path):
+    """The note must be byte-identical whether or not a ChangesSet is present,
+    so `check`'s no-`-V` re-render never reports the doc stale (B5)."""
+    (repo / "f.cpp").write_text("int foo() {\n    int x = 1;\n    return x;\n}\n")
+    base = _commit(repo, "init")
+    (repo / "f.cpp").write_text("int foo() {\n    int x = 2;\n    return x;\n}\n")
+    _commit(repo, "change")
+
+    tmpl = '{{ audit("f.cpp", function="foo", reason="tweak") }}'
+    without_v = _first_note(_render(repo, tmp_path, tmpl, changes=None).text)
+    with_v = _first_note(
+        _render(repo, tmp_path, tmpl, changes=ChangesSet.from_diff(base=base, repo_path=repo)).text
+    )
+    assert without_v == with_v
+
+
+# ----------------------------------------------------------- coverage claim
+
+def test_audit_claims_coverage(repo, tmp_path):
+    (repo / "f.cpp").write_text("int foo() {\n    return 0;\n}\n")
+    base = _commit(repo, "init")
+    (repo / "f.cpp").write_text("int foo() {\n    int x = 1;\n    return x;\n}\n")
+    _commit(repo, "change")
+
+    changes = ChangesSet.from_diff(base=base, repo_path=repo)
+    assert not changes.is_complete()                      # there are changed lines
+    result = _render(
+        repo, tmp_path,
+        '{{ audit("f.cpp", function="foo", reason="trivial refactor") }}',
+        changes,
+    )
+    assert result.ok
+    assert changes.is_complete()                          # audit() claimed the changed region
+
+
+def test_whole_file_audit_claims_all(repo, tmp_path):
+    (repo / "f.cpp").write_text("a\n")
+    base = _commit(repo, "init")
+    (repo / "f.cpp").write_text("a\nb\nc\n")
+    _commit(repo, "change")
+    changes = ChangesSet.from_diff(base=base, repo_path=repo)
+    assert not changes.is_complete()
+    _render(repo, tmp_path, '{{ audit("f.cpp", reason="all boilerplate") }}', changes)
+    assert changes.is_complete()
