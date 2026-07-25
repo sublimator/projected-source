@@ -283,6 +283,8 @@ class TemplateRenderer:
         enclosure_context: int = None,
         id: str = None,
         tags=None,
+        from_marker: str = None,
+        to_marker: str = None,
     ) -> str:
         """
         Universal code extraction function for templates.
@@ -398,6 +400,16 @@ class TemplateRenderer:
 
             # Get the appropriate extractor
             extractor = get_extractor(resolved_path)
+
+            # Marker-bounded region: carve a symbol (or the file) at existing
+            # marker cut-points — head = to_marker, tail = from_marker — so a big
+            # function splits into readable pieces WITHOUT adding new markers.
+            # Resolve to a concrete (start, end) and fall through as a lines= read.
+            if from_marker or to_marker:
+                lines = self._marker_bounded_range(
+                    extractor, resolved_path, function, struct, signature, lines, from_marker, to_marker
+                )
+                function = struct = var = marker = None  # consumed into the line range
 
             # Extract code based on parameters
             if function:
@@ -961,6 +973,59 @@ class TemplateRenderer:
         if label:
             parts.append(self._comment_attr("label", label))
         return f"<!-- edge {' '.join(parts)} -->"
+
+    def _marker_bounded_range(
+        self, extractor, path, function, struct, signature, lines, from_marker, to_marker
+    ):
+        """Resolve a symbol (or lines/whole-file) clipped by existing markers.
+
+        `to_marker=M` ends the region just before M's `//@@start` line (the head
+        of the symbol, before M); `from_marker=M` starts it just after M's
+        `//@@end` line (the tail, after M). The marker's own body is claimed by a
+        separate `marker='M'` extract, so head + marker + tail cover the symbol
+        with no gap and no overlap — the split reuses one existing marker instead
+        of adding a pair.
+        """
+        # Base bounds: the named symbol, else an explicit lines= span, else file.
+        if function:
+            _, s, e = self._call_symbol(extractor, "extract_function", path, function, signature)
+        elif struct:
+            _, s, e = self._call_symbol(extractor, "extract_struct", path, struct, None)
+        elif lines:
+            s, e = int(lines[0]), int(lines[1])
+        else:
+            s, e = 1, len(path.read_text().splitlines())
+
+        markers = extractor.find_markers_in_file(path)
+
+        def _need(name):
+            if name not in markers:
+                avail = ", ".join(sorted(markers)) if markers else "none"
+                raise ValueError(f"Marker '{name}' not found. Available: {avail}")
+            return markers[name]  # (content_start, content_end); delimiters at cs-1 / ce+1
+
+        if from_marker:
+            s = _need(from_marker)[1] + 2  # first line after //@@end
+        if to_marker:
+            e = _need(to_marker)[0] - 2    # last line before //@@start
+        if s > e:
+            raise ValueError(
+                f"marker-bounded range is empty (start {s} > end {e}) — check "
+                f"from_marker/to_marker placement relative to the symbol"
+            )
+        return (s, e)
+
+    @staticmethod
+    def _call_symbol(extractor, method_name, path, name, signature):
+        """Call extract_function/extract_struct, passing signature only if the
+        extractor's method accepts it (overload disambiguation)."""
+        method = getattr(extractor, method_name)
+        if signature is not None:
+            try:
+                return method(path, name, signature=signature)
+            except TypeError:
+                pass  # extractor without signature support
+        return method(path, name)
 
     def _link_function(self, target: str, text: str = None) -> str:
         """Render an intra-document link to another chunk's anchor.

@@ -427,3 +427,76 @@ class TestIgnoreChangesCoordinates:
         # A pin at a non-destination commit is a different coordinate
         # space — it must not consume anything.
         assert _uncovered_ranges(changes) == [(2, 2), (4, 4)]
+
+
+_MARKED_FUNCTION = (
+    "void bigFunc()\n"
+    "{\n"
+    "    int head1 = 1;\n"
+    "    int head2 = 2;\n"
+    "    //@@start core\n"
+    "    int mid1 = 10;\n"
+    "    int mid2 = 20;\n"
+    "    //@@end core\n"
+    "    int tail1 = 3;\n"
+    "    int tail2 = 4;\n"
+    "}\n"
+)
+
+
+class TestMarkerBoundedCarving:
+    """code(function=.., to_marker/from_marker=..) carves a symbol at an existing
+    marker into head / marked / tail — reusing one marker, no new pairs."""
+
+    def _prepare(self, repo):
+        src = repo / "f.cpp"
+        src.write_text("// file\n")
+        _commit_all(repo, "base")
+        base = _git(repo, "rev-parse", "HEAD")
+        src.write_text(_MARKED_FUNCTION)
+        _commit_all(repo, "add marked function")
+        return base
+
+    def test_head_and_tail_line_ranges(self, repo, tmp_path):
+        self._prepare(repo)
+        changes = ChangesSet.from_diff(base="HEAD~1", repo_path=repo)
+        text = _render(
+            repo,
+            tmp_path,
+            "{{ code('f.cpp', function='bigFunc', to_marker='core', github=False) }}\n"
+            "{{ code('f.cpp', function='bigFunc', from_marker='core', github=False) }}\n",
+            changes,
+            enclosure_context=0,
+        )
+        assert "f.cpp:1-4" in text      # head: signature .. line before //@@start
+        assert "f.cpp:9-11" in text     # tail: line after //@@end .. closing brace
+
+    def test_head_marker_tail_cover_with_no_gap(self, repo, tmp_path):
+        base = self._prepare(repo)
+        changes = ChangesSet.from_diff(base=base, repo_path=repo)
+        _render(
+            repo,
+            tmp_path,
+            "{{ code('f.cpp', function='bigFunc', to_marker='core', github=False) }}\n"
+            "{{ code('f.cpp', marker='core', enclosure_context=0, github=False) }}\n"
+            "{{ code('f.cpp', function='bigFunc', from_marker='core', github=False) }}\n",
+            changes,
+            enclosure_context=0,
+        )
+        assert changes.is_complete()      # 11 changed lines, residual 0
+        assert _uncovered_ranges(changes) == []
+
+    def test_unknown_marker_is_a_clean_error(self, repo, tmp_path):
+        self._prepare(repo)
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=repo)
+        out = renderer._code_function("f.cpp", function="bigFunc", to_marker="nope", github=False)
+        assert "❌" in out and "not found" in out.lower()
+
+    def test_empty_range_is_rejected(self, repo, tmp_path):
+        # from_marker past to_marker within the symbol → empty, must not silently pass
+        self._prepare(repo)
+        renderer = TemplateRenderer(template_dir=tmp_path, repo_path=repo)
+        out = renderer._code_function(
+            "f.cpp", function="bigFunc", from_marker="core", to_marker="core", github=False
+        )
+        assert "❌" in out and "empty" in out.lower()
