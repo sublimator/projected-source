@@ -108,8 +108,26 @@ def test_reason_is_html_comment_safe(repo, tmp_path):
     assert note.startswith("<!-- ") and note.endswith(" -->")
     inner = note[len("<!-- "): -len(" -->")]   # content between opener and terminator
     assert "-->" not in inner                  # cannot terminate the comment early
-    assert "--" not in inner                   # no bare double-hyphen (invalid in HTML comments)
-    assert "&gt;" in note and "&lt;" in note and "&quot;" in note and "&amp;" in note
+    assert '"q"' not in note and "&quot;q&quot;" in note   # the attribute quote is escaped
+    # everything else stays byte-exact and greppable (H1 fidelity, F1):
+    assert "loop -- see" in note               # a bare -- in prose is preserved
+    assert "<x>" in note and "& z" in note      # <, >, & are not entity-mangled
+
+
+def test_double_dash_paths_and_markers_are_byte_exact(repo, tmp_path):
+    """A `--` in a path or selector must survive verbatim so the note resolves (F1)."""
+    (repo / "o--dd.cpp").write_text(
+        "int a() {\n  //@@start we--ird\n  int x = 1;\n  //@@end we--ird\n}\n"
+    )
+    _commit(repo, "init")
+    note = _first_note(
+        _render(
+            repo, tmp_path,
+            '{{ audit("o--dd.cpp", marker="we--ird", reason="double dashes everywhere") }}',
+        ).text
+    )
+    assert 'file="o--dd.cpp"' in note            # path -- preserved, not o-dd.cpp
+    assert 'marker="we--ird"' in note            # marker -- preserved, not we-ird
 
 
 def test_reason_collapses_newlines(repo, tmp_path):
@@ -158,6 +176,14 @@ def test_extents_identical_with_and_without_V(repo, tmp_path):
     base = _commit(repo, "init")
     (repo / "f.cpp").write_text("int foo() {\n    int x = 2;\n    return x;\n}\n")
     _commit(repo, "change")
+    # Dirty the tree with an UNCOMMITTED edit above the audited symbol, so the
+    # working-tree line numbers differ from the committed ones. Without this the
+    # tree is clean, map_to_committed_line is the identity, and a -V-dependent
+    # note (the B5 bug) would look identical anyway — the test could not detect it.
+    (repo / "f.cpp").write_text(
+        "// uncommitted line 1\n// uncommitted line 2\n"
+        "int foo() {\n    int x = 2;\n    return x;\n}\n"
+    )
 
     tmpl = '{{ audit("f.cpp", function="foo", reason="tweak") }}'
     without_v = _first_note(_render(repo, tmp_path, tmpl, changes=None).text)

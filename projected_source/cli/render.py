@@ -593,7 +593,22 @@ def _report_validation(changes_set, effective_repo_path: Path, strict: bool) -> 
                     f"    [yellow]{escape(str(_rel(r.file_path)))}:{spans} ({r.changed_lines} lines)[/yellow]"
                 )
 
+    # H5 fail-half: if review_scope excluded every change there was nothing to
+    # validate — a green tick there is a lie. Fail --strict rather than pass
+    # vacuously (an over-broad exclude or a typo'd include that matched nothing).
+    scope_emptied = total == 0 and changes_set.out_of_scope_line_count() > 0
+
     if not uncovered:
+        if scope_emptied:
+            console.print(
+                "  residual      0  [yellow]⚠ nothing validated — review_scope excluded every change[/yellow]"
+            )
+            if strict:
+                console.print(
+                    "\n[red]✗ Validation failed (--strict): review_scope left nothing to check[/red]"
+                )
+                sys.exit(1)
+            return
         console.print("  residual      0  [green]✓ all changes accounted for[/green]")
         return
 

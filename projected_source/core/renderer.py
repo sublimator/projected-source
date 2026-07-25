@@ -851,20 +851,17 @@ class TemplateRenderer:
 
     @staticmethod
     def _escape_comment_value(value: str) -> str:
-        """Make a string safe inside key="value" within an HTML comment.
+        """Make a string safe as key="value" inside an HTML comment, byte-exactly.
 
-        Escapes the attribute/comment-hostile characters and collapses any run
-        of '-' (a bare '--' is invalid inside an HTML comment, and '-->' would
-        terminate it early — H1).
+        Exactly two things can break the note: a `"` would end the attribute, and
+        a literal `-->` would terminate the comment early. Only those are
+        rewritten — everything else (including `--`, `<`, `>`, `&`) is kept
+        literal so paths and selectors stay byte-exact and re-resolve, and the
+        trail stays greppable. Neutralizing `-->` (not every `>`) means a lone
+        `operator>` or a path is untouched; the collapse of `--` is gone (H1: it
+        silently corrupted `operator--`, `o--dd.cpp`, and marker names).
         """
-        out = (
-            str(value)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-        )
-        return re.sub(r"-{2,}", "-", out)
+        return str(value).replace('"', "&quot;").replace("-->", "--&gt;")
 
     def _comment_attr(self, key: str, value) -> str:
         return f'{key}="{self._escape_comment_value(value)}"'
