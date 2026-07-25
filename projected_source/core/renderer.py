@@ -204,6 +204,7 @@ class TemplateRenderer:
         root: str = None,
         enclosure: str = None,
         enclosure_context: int = None,
+        id: str = None,
     ) -> str:
         """
         Universal code extraction function for templates.
@@ -558,13 +559,13 @@ class TemplateRenderer:
                     # above the extracted region don't shift the wrong rows.
                     committed_start = self.github.map_to_committed_line(display_path, coverage_start)
                     committed_end = self.github.map_to_committed_line(display_path, coverage_end)
-                    self.changes_set.claim("code", display_path, [(committed_start, committed_end)])
+                    self.changes_set.claim("code", display_path, [(committed_start, committed_end)], chunk_id=id)
                 elif self._ref_is_changes_target(active_ref):
                     # Pinned at the validated range's destination commit: the
                     # extraction's coordinates are already in the same space
                     # as the diff's new-version lines. Any other ref lives in
                     # an unrelated coordinate space and claims nothing.
-                    self.changes_set.claim("code", display_path, [(coverage_start, coverage_end)])
+                    self.changes_set.claim("code", display_path, [(coverage_start, coverage_end)], chunk_id=id)
 
             # Remap line numbers if requested (for sharing docs from dirty files)
             display_start = start_line
@@ -639,7 +640,12 @@ class TemplateRenderer:
                 language = language_map.get(suffix, "text")
 
             # Build final output
-            return f"{header}\n```{language}\n{code_text}\n```"
+            block = f"{header}\n```{language}\n{code_text}\n```"
+            if id:
+                # A reader-invisible anchor so the chunk is addressable as a
+                # graph node (the id seed; edges/validation grow later).
+                block = f'<!-- chunk id="{self._escape_comment_value(id)}" -->\n{block}'
+            return block
 
         except Exception as e:
             logger.error(f"Code extraction failed: {e}")
@@ -951,6 +957,7 @@ class TemplateRenderer:
         root: str = None,
         minus: Union[Dict, List[Dict]] = None,
         committed: bool = False,
+        id: str = None,
     ) -> str:
         """Acknowledge a changed region in the audit trail without narrating it.
 
@@ -995,8 +1002,10 @@ class TemplateRenderer:
         # Whole-file audit: claim everything, no line extents in the note.
         if not has_spec:
             if self.changes_set is not None:
-                self.changes_set.claim("audit", resolved_path, [(1, 999999)])
+                self.changes_set.claim("audit", resolved_path, [(1, 999999)], chunk_id=id)
             attrs = [self._comment_attr("file", self._safe_repo_rel(resolved_path)), 'scope="whole-file"']
+            if id:
+                attrs.append(self._comment_attr("id", id))
             if active_ref:
                 attrs.append(self._comment_attr("ref", active_ref))
             attrs.append(self._comment_attr("reason", clean_reason))
@@ -1056,7 +1065,7 @@ class TemplateRenderer:
             if self.changes_set is not None:
                 if active_ref:
                     if self._ref_is_changes_target(active_ref):
-                        self.changes_set.claim("audit", resolved_path, list(regions))
+                        self.changes_set.claim("audit", resolved_path, list(regions), chunk_id=id)
                     else:
                         logger.warning(
                             f"audit ref='{active_ref}' is not the validated range's destination "
@@ -1066,7 +1075,7 @@ class TemplateRenderer:
                     # Coords are already in committed / D space (e.g. from
                     # audit-stubs); claim them directly — mapping again would
                     # double-shift them in a dirty tree (F4).
-                    self.changes_set.claim("audit", resolved_path, list(regions))
+                    self.changes_set.claim("audit", resolved_path, list(regions), chunk_id=id)
                 else:
                     self.changes_set.claim(
                         "audit",
@@ -1078,6 +1087,7 @@ class TemplateRenderer:
                             )
                             for s, e in regions
                         ],
+                        chunk_id=id,
                     )
 
             # Emitted extents are the DISPLAYED coordinates — never the committed
@@ -1097,6 +1107,8 @@ class TemplateRenderer:
                 self._comment_attr("file", self._safe_repo_rel(resolved_path)),
                 self._comment_attr("lines", lines_str),
             ]
+            if id:
+                attrs.append(self._comment_attr("id", id))
             if lines is None:
                 attrs.extend(
                     self._audit_selector_attrs(

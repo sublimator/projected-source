@@ -114,6 +114,16 @@ def test_reason_is_html_comment_safe(repo, tmp_path):
     assert "<x>" in note and "& z" in note      # <, >, & are not entity-mangled
 
 
+def test_id_is_emitted_in_note(repo, tmp_path):
+    """audit(id=...) carries the node id into the note (chunk-graph seed)."""
+    (repo / "f.cpp").write_text("int foo() {\n  return 1;\n}\n")
+    _commit(repo, "init")
+    note = _first_note(
+        _render(repo, tmp_path, '{{ audit("f.cpp", function="foo", id="admit", reason="x") }}').text
+    )
+    assert 'id="admit"' in note
+
+
 def test_double_dash_paths_and_markers_are_byte_exact(repo, tmp_path):
     """A `--` in a path or selector must survive verbatim so the note resolves (F1)."""
     (repo / "o--dd.cpp").write_text(

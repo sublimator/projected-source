@@ -75,6 +75,17 @@ def test_zero_claim_is_visible_in_records():
     assert len(zero) == 1 and zero[0].bucket == "audit"   # M3 signal available
 
 
+def test_claim_carries_chunk_id():
+    """id= is recorded on the claim record — the seed for the chunk graph."""
+    p = Path("f.cpp")
+    cs = _cs_with_d(p, (1, 10))
+    cs.claim("code", p, [(1, 5)], chunk_id="admit")
+    cs.claim("audit", p, [(6, 10)])          # no id
+    _, records = cs.partition()
+    by_bucket = {r.bucket: r.chunk_id for r in records}
+    assert by_bucket == {"code": "admit", "audit": None}
+
+
 def test_partition_freezes_d_lazily_on_first_claim():
     """A directly-built ChangesSet (no from_diff, no manual _freeze_d) still
     reports |D| and the partition correctly — freeze happens on first claim (F13)."""

@@ -83,6 +83,7 @@ class ClaimRecord:
     regions: List[Tuple[int, int]]
     changed_lines: int  # |regions ∩ D| against the frozen snapshot (density / M3)
     credited_lines: int  # lines this claim actually removed from the residual
+    chunk_id: Optional[str] = None  # stable node id (seed for the chunk graph)
 
 
 def _count_in_intervals(intervals: List[Tuple[int, int]], start: int, end: int) -> int:
@@ -467,7 +468,13 @@ class ChangesSet:
         self._d_line_count = sum(e - s + 1 for regs in self._d_snapshot.values() for s, e in regs)
         self._frozen = True
 
-    def claim(self, bucket: str, file_path: Path, regions: List[Tuple[int, int]]) -> None:
+    def claim(
+        self,
+        bucket: str,
+        file_path: Path,
+        regions: List[Tuple[int, int]],
+        chunk_id: Optional[str] = None,
+    ) -> None:
         """Claim coverage for one or more line spans.
 
         `bucket` is one of BUCKET_PRIORITY. `regions` is a list of (start, end)
@@ -475,6 +482,8 @@ class ChangesSet:
         "symbol minus marker". Each span is subtracted immediately (so the
         residual and uncovered()/is_complete() stay live and order-independent)
         and recorded, so partition() can attribute lines to buckets disjointly.
+        `chunk_id` is an optional stable node id carried through to the record
+        (the seed for the chunk graph).
         """
         # Freeze D on the first claim if from_diff did not (a directly built
         # ChangesSet is the library API), so partition()/changed_line_count()
@@ -482,7 +491,7 @@ class ChangesSet:
         if not self._frozen:
             self._freeze_d()
         norm = [(min(s, e), max(s, e)) for s, e in regions]
-        self._claims.append((bucket, file_path, norm))
+        self._claims.append((bucket, file_path, norm, chunk_id))
         for s, e in norm:
             self.subtract(file_path, s, e)
 
@@ -499,7 +508,7 @@ class ChangesSet:
         bucket_lines = {b: 0 for b in BUCKET_PRIORITY}
         records: List[ClaimRecord] = []
         for bucket in BUCKET_PRIORITY:
-            for claim_bucket, path, regions in self._claims:
+            for claim_bucket, path, regions, chunk_id in self._claims:
                 if claim_bucket != bucket:
                     continue
                 changed = sum(_count_in_intervals(self._d_snapshot.get(path, []), s, e) for s, e in regions)
@@ -508,7 +517,7 @@ class ChangesSet:
                     credited += _count_in_intervals(residual.get(path, []), s, e)
                     residual[path] = _subtract_interval(residual.get(path, []), s, e)
                 bucket_lines[bucket] += credited
-                records.append(ClaimRecord(bucket, path, regions, changed, credited))
+                records.append(ClaimRecord(bucket, path, regions, changed, credited, chunk_id))
         return bucket_lines, records
 
     def changed_line_count(self) -> int:
