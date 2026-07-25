@@ -21,13 +21,20 @@ from .helpers import console
     default=Path.cwd(),
     help="Repository root path",
 )
-@click.option("--topo", is_flag=True, help="Print a topological order of the chunks")
+@click.option("--topo", is_flag=True, help="Print a topological (dependency) order of the chunks")
+@click.option("--doc", is_flag=True, help="Print the document (reading) order of the chunks")
+@click.option(
+    "--tag",
+    "tags",
+    multiple=True,
+    help="Slice to chunks carrying any of these tags (induced subgraph). Repeatable.",
+)
 @click.option(
     "--strict",
     is_flag=True,
     help="Exit 1 on orphans, cycles, dangling edges, or a [graph] policy violation",
 )
-def graph(template: Path, repo_path: Path, topo: bool, strict: bool):
+def graph(template: Path, repo_path: Path, topo: bool, doc: bool, tags: tuple, strict: bool):
     """Show the chunk graph of a rendered document.
 
     Nodes are chunk ids — code(id=..), {% chunk %}, audit(id=..); edges are
@@ -50,6 +57,19 @@ def graph(template: Path, repo_path: Path, topo: bool, strict: bool):
 
     g = extract_graph(result.text)
     cfg = load_config(template)
+
+    # A tag census names the themes before any slicing — a quick read on whether
+    # the tour is balanced or lopsided.
+    census = g.tags_census()
+    if census:
+        summary = ", ".join(f"{t}×{n}" for t, n in sorted(census.items(), key=lambda kv: (-kv[1], kv[0])))
+        console.print(f"[cyan]tags[/cyan] — {summary}")
+
+    # --tag slices to the induced subgraph so orphan/cycle/topo apply to the theme.
+    if tags:
+        keep = set().union(*(g.nodes_with_tag(t) for t in tags))
+        g = g.subgraph(keep)
+        console.print(f"[cyan]slice[/cyan] — tag(s) {', '.join(tags)}: {len(g.nodes)} node(s)")
 
     console.print(
         f"[cyan]Chunk graph[/cyan] — {len(g.nodes)} node(s), {len(g.edges)} edge(s) "
@@ -103,6 +123,9 @@ def graph(template: Path, repo_path: Path, topo: bool, strict: bool):
 
     if not (dangling or underconnected or cycle):
         console.print("  [green]✓ connected, acyclic, no dangling edges[/green]")
+
+    if doc:
+        console.print(f"  document order: {' -> '.join(g.document_order) if g.document_order else '(empty)'}")
 
     if topo:
         if cyclic:

@@ -3,20 +3,29 @@
 The graph is derived from the rendered artifact — no side state:
   nodes  ← `<!-- chunk id=".." -->` (code() id= and {% chunk %}) and the
            `id=".."` attribute on `<!-- audit .. -->` notes
+  tags   ← the optional `tags=".."` attribute on either anchor
   edges  ← `<!-- edge from=".." type=".." to=".." -->` (the relate() directive)
 
 Forcing authors to write the relationships is the point: it turns a dump into a
-structure you can check (orphans, cycles) and reorder (topological).
+structure you can check (orphans, cycles), reorder (topological), and slice by
+theme (tags).
 """
 
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
-_CHUNK_RE = re.compile(r'<!--\s*chunk\s+id="([^"]*)"')
-_AUDIT_ID_RE = re.compile(r'<!--\s*audit\b[^>]*?\bid="([^"]*)"')
+# Opening anchors only — `chunk\s+` and `audit\b` never match the `/chunk` /
+# `/audit` end anchors. `.*?` is safe because the renderer neutralizes any `-->`
+# inside an attribute value before it reaches the document.
+_CHUNK_OPEN_RE = re.compile(r"<!--\s*chunk\s+(.*?)-->")
+_AUDIT_OPEN_RE = re.compile(r"<!--\s*audit\s+(.*?)-->")
 _EDGE_RE = re.compile(r"<!--\s*edge\s+(.*?)-->")
 _ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
+
+
+def _parse_tags(raw: str) -> Set[str]:
+    return {t.strip() for t in raw.split(",") if t.strip()}
 
 
 @dataclass(frozen=True)
@@ -28,9 +37,41 @@ class Edge:
 
 
 class ChunkGraph:
-    def __init__(self, nodes: Set[str], edges: List[Edge]):
+    def __init__(
+        self,
+        nodes: Set[str],
+        edges: List[Edge],
+        node_tags: Optional[Dict[str, Set[str]]] = None,
+        document_order: Optional[List[str]] = None,
+    ):
         self.nodes = set(nodes)
         self.edges = list(edges)
+        self.node_tags: Dict[str, Set[str]] = {n: set(node_tags.get(n, set())) for n in self.nodes} if node_tags else {n: set() for n in self.nodes}
+        # Reading order — the sequence anchors appear in the document. Falls back
+        # to a stable sort so callers always get every node exactly once.
+        seen = [n for n in (document_order or []) if n in self.nodes]
+        self.document_order: List[str] = seen + sorted(self.nodes - set(seen))
+
+    # -- tags --
+
+    def tags_census(self) -> Dict[str, int]:
+        """tag → number of nodes carrying it, for a quick thematic overview."""
+        census: Dict[str, int] = {}
+        for tags in self.node_tags.values():
+            for t in tags:
+                census[t] = census.get(t, 0) + 1
+        return census
+
+    def nodes_with_tag(self, tag: str) -> Set[str]:
+        return {n for n, tags in self.node_tags.items() if tag in tags}
+
+    def subgraph(self, keep: Set[str]) -> "ChunkGraph":
+        """Induced subgraph over `keep` — edges are retained only when both
+        endpoints survive, so a tag slice stays internally consistent."""
+        keep = keep & self.nodes
+        edges = [e for e in self.edges if e.source in keep and e.target in keep]
+        order = [n for n in self.document_order if n in keep]
+        return ChunkGraph(keep, edges, {n: self.node_tags[n] for n in keep}, order)
 
     # -- degrees / orphans --
 
@@ -115,11 +156,24 @@ class ChunkGraph:
 
 def extract_graph(rendered: str) -> ChunkGraph:
     """Build the ChunkGraph from a rendered document's anchors and edges."""
-    nodes: Set[str] = set(_CHUNK_RE.findall(rendered)) | set(_AUDIT_ID_RE.findall(rendered))
-    nodes.discard("")
+    nodes: Set[str] = set()
+    node_tags: Dict[str, Set[str]] = {}
+    positioned: List[Tuple[int, str]] = []  # (offset, id) → document order
+    for anchor_re in (_CHUNK_OPEN_RE, _AUDIT_OPEN_RE):
+        for match in anchor_re.finditer(rendered):
+            attrs = dict(_ATTR_RE.findall(match.group(1)))
+            nid = attrs.get("id", "")
+            if not nid:
+                continue
+            if nid not in nodes:
+                positioned.append((match.start(), nid))
+            nodes.add(nid)
+            if attrs.get("tags"):
+                node_tags.setdefault(nid, set()).update(_parse_tags(attrs["tags"]))
+    document_order = [nid for _, nid in sorted(positioned)]  # both anchor kinds, by offset
     edges: List[Edge] = []
     for match in _EDGE_RE.finditer(rendered):
         attrs = dict(_ATTR_RE.findall(match.group(1)))
         if attrs.get("from") and attrs.get("to"):
             edges.append(Edge(attrs["from"], attrs["to"], attrs.get("type", ""), attrs.get("label", "")))
-    return ChunkGraph(nodes, edges)
+    return ChunkGraph(nodes, edges, node_tags, document_order)

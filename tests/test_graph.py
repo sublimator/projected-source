@@ -43,6 +43,36 @@ def test_dangling_edge():
     assert [e.target for e in dangling] == ["ghost"]
 
 
+def test_document_order_is_first_appearance_across_both_anchor_kinds():
+    doc = (
+        '<!-- chunk id="c" -->'
+        '<!-- audit file="f" lines="1" id="a" reason="x" -->'
+        '<!-- chunk id="b" -->'
+        '<!-- chunk id="c" -->'  # re-mention keeps c at its first position
+    )
+    assert extract_graph(doc).document_order == ["c", "a", "b"]
+
+
+def test_document_order_survives_tag_slice():
+    doc = (
+        '<!-- chunk id="a" tags="t" --><!-- chunk id="x" --><!-- chunk id="b" tags="t" -->'
+    )
+    g = extract_graph(doc)
+    assert g.subgraph(g.nodes_with_tag("t")).document_order == ["a", "b"]
+
+
+def test_graph_command_prints_document_order(tmp_path):
+    tour = _write_tour(
+        tmp_path,
+        '{% chunk id="c" %}{{ relate("a", "feeds", "b") }}{% endchunk %}\n'
+        '{% chunk id="a" %}a{% endchunk %}\n'
+        '{% chunk id="b" %}b{% endchunk %}\n',
+    )
+    result = CliRunner().invoke(graph, ["-r", str(tmp_path), "--doc", str(tour)])
+    assert result.exit_code == 0, result.output
+    assert "document order: c -> a -> b" in result.output
+
+
 def test_topological_order_dag():
     doc = (
         '<!-- chunk id="a" --><!-- chunk id="b" --><!-- chunk id="c" -->'
@@ -68,6 +98,58 @@ def test_cycle_detected():
 def test_density():
     doc = '<!-- chunk id="a" --><!-- chunk id="b" --><!-- edge from="a" to="b" -->'
     assert extract_graph(doc).density() == 0.5
+
+
+# ------------------------------------------------------------------ tags
+
+def test_tags_parsed_from_chunk_and_audit_anchors():
+    doc = (
+        '<!-- chunk id="a" tags="overview,transport" -->\n'
+        '<!-- audit file="f" lines="1" id="b" reason="x" tags="transport" -->\n'
+        '<!-- chunk id="c" -->\n'
+    )
+    g = extract_graph(doc)
+    assert g.node_tags["a"] == {"overview", "transport"}
+    assert g.node_tags["b"] == {"transport"}
+    assert g.node_tags["c"] == set()  # untagged node has an empty set, not KeyError
+
+
+def test_tags_census_counts_nodes_per_tag():
+    doc = (
+        '<!-- chunk id="a" tags="x,y" -->'
+        '<!-- chunk id="b" tags="x" -->'
+        '<!-- chunk id="c" -->'
+    )
+    assert extract_graph(doc).tags_census() == {"x": 2, "y": 1}
+
+
+def test_subgraph_by_tag_keeps_only_internal_edges():
+    doc = (
+        '<!-- chunk id="a" tags="t" --><!-- chunk id="b" tags="t" --><!-- chunk id="c" -->'
+        '<!-- edge from="a" to="b" --><!-- edge from="b" to="c" -->'
+    )
+    g = extract_graph(doc)
+    sub = g.subgraph(g.nodes_with_tag("t"))
+    assert sub.nodes == {"a", "b"}
+    # the a→b edge survives; b→c is dropped because c is outside the slice
+    assert [(e.source, e.target) for e in sub.edges] == [("a", "b")]
+
+
+def test_graph_command_reports_tag_census_and_slices(tmp_path):
+    tour = _write_tour(
+        tmp_path,
+        '{% chunk id="a" tags=["overview"] %}{{ relate("a", "feeds", "b") }}{% endchunk %}\n'
+        '{% chunk id="b" tags=["transport"] %}{{ relate("b", "feeds", "c") }}{% endchunk %}\n'
+        '{% chunk id="c" tags=["transport"] %}c{% endchunk %}\n',
+    )
+    full = CliRunner().invoke(graph, ["-r", str(tmp_path), str(tour)])
+    assert full.exit_code == 0, full.output
+    assert "transport×2" in full.output and "overview×1" in full.output
+
+    sliced = CliRunner().invoke(graph, ["-r", str(tmp_path), "--tag", "transport", "--topo", str(tour)])
+    assert sliced.exit_code == 0, sliced.output
+    assert "tag(s) transport: 2 node(s)" in sliced.output
+    assert "topological order: b -> c" in sliced.output
 
 
 # ------------------------------------------------------------------ CLI
