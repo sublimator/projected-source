@@ -18,6 +18,7 @@ from jinja2 import nodes, pass_context
 from jinja2.ext import Extension
 
 from ..languages import get_extractor
+from .changes_set import _subtract_interval
 from .github import GitHubIntegration
 
 if TYPE_CHECKING:
@@ -876,6 +877,11 @@ class TemplateRenderer:
             rel = path
         return rel.as_posix()
 
+    @staticmethod
+    def _describe_selector(spec: Dict) -> str:
+        """Short 'key=value' description of a minus selector, for the note."""
+        return ",".join(f"{k}={v}" for k, v in spec.items())
+
     def _audit_selector_attrs(
         self,
         *,
@@ -938,6 +944,7 @@ class TemplateRenderer:
         service: str = None,
         ref: str = None,
         root: str = None,
+        minus: Union[Dict, List[Dict]] = None,
     ) -> str:
         """Acknowledge a changed region in the audit trail without narrating it.
 
@@ -1007,7 +1014,7 @@ class TemplateRenderer:
                 extract_path = tmp_file
 
             extractor = get_extractor(extract_path)
-            start_line, end_line = self._extract_region_extents(
+            base_start, base_end = self._extract_region_extents(
                 extractor,
                 extract_path,
                 function=function,
@@ -1023,30 +1030,52 @@ class TemplateRenderer:
                 service=service,
             )
 
-            # Claim coverage with the same coordinate discipline as code()/ignore_changes().
+            # Geometry: subtract each `minus` selector's region from the base,
+            # yielding one or more disjoint regions (a function minus a narrated
+            # marker -> the before/after pieces). Region-set claims mean the tally
+            # and note handle this without special cases.
+            regions = [(base_start, base_end)]
+            minus_specs = ([minus] if isinstance(minus, dict) else list(minus)) if minus else []
+            for spec in minus_specs:
+                if not isinstance(spec, dict):
+                    raise ValueError("audit minus= must be a selector dict or a list of them")
+                cut_start, cut_end = self._extract_region_extents(extractor, extract_path, **spec)
+                regions = [piece for reg in regions for piece in _subtract_interval([reg], cut_start, cut_end)]
+            if not regions:
+                raise ValueError("audit minus= removed the entire region")
+
+            # Claim coverage for every region, same coordinate discipline as
+            # code()/ignore_changes().
             if self.changes_set is not None:
                 if active_ref:
                     if self._ref_is_changes_target(active_ref):
-                        self.changes_set.claim("audit", resolved_path, [(start_line, end_line)])
+                        self.changes_set.claim("audit", resolved_path, list(regions))
                     else:
                         logger.warning(
                             f"audit ref='{active_ref}' is not the validated range's destination "
                             f"commit; not claiming coverage for {effective_path}"
                         )
                 else:
-                    committed_start = self.github.map_to_committed_line(resolved_path, start_line)
-                    committed_end = self.github.map_to_committed_line(resolved_path, end_line)
-                    self.changes_set.claim("audit", resolved_path, [(committed_start, committed_end)])
+                    committed = [
+                        (
+                            self.github.map_to_committed_line(resolved_path, s),
+                            self.github.map_to_committed_line(resolved_path, e),
+                        )
+                        for s, e in regions
+                    ]
+                    self.changes_set.claim("audit", resolved_path, committed)
 
             # Emitted extents are the DISPLAYED coordinates — never the committed
             # coverage coordinates — so the note is identical with or without -V
-            # (B5: check freshness). remap_dirty_lines mirrors code()'s header.
-            display_start, display_end = start_line, end_line
-            if self.remap_dirty_lines and not active_ref:
-                display_start = self.github.map_to_committed_line(resolved_path, start_line)
-                display_end = self.github.map_to_committed_line(resolved_path, end_line)
+            # (B5). Multiple regions render as a comma-separated list.
+            def _disp(n: int) -> int:
+                if self.remap_dirty_lines and not active_ref:
+                    return self.github.map_to_committed_line(resolved_path, n)
+                return n
 
-            lines_str = f"{display_start}" if display_start == display_end else f"{display_start}-{display_end}"
+            lines_str = ",".join(
+                (f"{_disp(s)}" if s == e else f"{_disp(s)}-{_disp(e)}") for s, e in regions
+            )
             attrs = [
                 self._comment_attr("file", self._safe_repo_rel(resolved_path)),
                 self._comment_attr("lines", lines_str),
@@ -1066,6 +1095,9 @@ class TemplateRenderer:
                         service=service,
                     )
                 )
+            if minus_specs:
+                described = "; ".join(self._describe_selector(s) for s in minus_specs)
+                attrs.append(self._comment_attr("minus", described))
             if active_ref:
                 attrs.append(self._comment_attr("ref", active_ref))
             attrs.append(self._comment_attr("reason", clean_reason))

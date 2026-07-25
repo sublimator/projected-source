@@ -197,6 +197,76 @@ def test_whole_file_audit_claims_all(repo, tmp_path):
     assert changes.is_complete()
 
 
+_MARKED_FUNC_BASE = (
+    "void f() {\n"
+    "    int before = 0;\n"
+    "    //@@start core\n"
+    "    int inside = 0;\n"
+    "    //@@end core\n"
+    "    int after = 0;\n"
+    "}\n"
+)
+_MARKED_FUNC_CHANGED = (
+    "void f() {\n"
+    "    int before = 1;\n"          # changed, outside marker
+    "    //@@start core\n"
+    "    int inside = 1;\n"          # changed, inside marker
+    "    //@@end core\n"
+    "    int after = 1;\n"           # changed, outside marker
+    "}\n"
+)
+
+
+def test_minus_yields_multiple_regions(repo, tmp_path):
+    (repo / "f.cpp").write_text(_MARKED_FUNC_BASE)
+    _commit(repo, "init")
+    (repo / "f.cpp").write_text(_MARKED_FUNC_CHANGED)
+    _commit(repo, "change")
+    note = _first_note(
+        _render(
+            repo, tmp_path,
+            '{{ audit("f.cpp", function="f", minus={"marker": "core"}, reason="frame around the narrated core") }}',
+        ).text
+    )
+    # two ranges (before + after the marker), and the geometry is recorded
+    assert note.count(",") >= 1 or re.search(r'lines="\d+-\d+,\d+-\d+"', note)
+    assert 'minus="marker=core"' in note
+    assert 'function="f"' in note
+
+
+def test_narrate_marker_audit_the_rest_covers_the_function(repo, tmp_path):
+    """code() the marker, audit() the function minus the marker -> the whole
+    function's changes are accounted for, split across the two buckets."""
+    (repo / "f.cpp").write_text(_MARKED_FUNC_BASE)
+    base = _commit(repo, "init")
+    (repo / "f.cpp").write_text(_MARKED_FUNC_CHANGED)
+    _commit(repo, "change")
+    changes = ChangesSet.from_diff(base=base, repo_path=repo)
+    result = _render(
+        repo, tmp_path,
+        '{{ code("f.cpp", function="f", marker="core") }}\n'
+        '{{ audit("f.cpp", function="f", minus={"marker": "core"}, reason="rest is trivial") }}\n',
+        changes,
+    )
+    assert result.ok
+    assert changes.is_complete()                 # every changed line in f covered
+    buckets, _ = changes.partition()
+    assert buckets["code"] >= 1 and buckets["audit"] >= 1   # split across both
+
+
+def test_minus_removing_everything_is_visible_error(repo, tmp_path):
+    (repo / "f.cpp").write_text(_MARKED_FUNC_BASE)
+    _commit(repo, "init")
+    (repo / "f.cpp").write_text(_MARKED_FUNC_CHANGED)
+    _commit(repo, "change")
+    result = _render(
+        repo, tmp_path,
+        '{{ audit("f.cpp", marker="core", minus={"marker": "core"}, reason="x") }}',
+    )
+    assert not result.ok
+    assert "audit-error" in result.text
+
+
 def test_partition_through_render(repo, tmp_path):
     """The renderer routes code/audit/ignore into disjoint buckets end to end."""
     (repo / "f.cpp").write_text(
