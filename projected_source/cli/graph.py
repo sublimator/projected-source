@@ -56,24 +56,52 @@ def graph(template: Path, repo_path: Path, topo: bool, strict: bool):
         f"(density {g.density():.2f})"
     )
 
-    orphans = g.orphans()
     dangling = g.dangling_edges()
     cycle = g.find_cycle()
     order, cyclic = g.topological_order()
 
-    problems = 0
-    if orphans:
-        console.print(f"  [yellow]orphans ({len(orphans)}): {', '.join(orphans)}[/yellow]")
-        problems += 1
+    # [graph] policy from .projected-source.toml.
+    min_edges = int(cfg.get("graph", "min_edges_per_node", 0) or 0)  # numeric dial; 1 == no orphans
+    forbid_cycles = bool(cfg.get("graph", "forbid_cycles", False))
+    min_density = cfg.get("graph", "min_edge_density", None)
+
+    degree = g.degree()
+    underconnected = sorted(n for n, d in degree.items() if d < min_edges) if min_edges else g.orphans()
+
+    fail = False
+
+    # A dangling edge is always a defect — it references a node that isn't there.
     if dangling:
         console.print(f"  [yellow]dangling edges ({len(dangling)}):[/yellow]")
         for e in dangling:
             console.print(f"    [yellow]{e.source} -> {e.target} (undeclared node)[/yellow]")
-        problems += 1
+        fail = True
+
+    # Under-connected nodes. With a dialed minimum they fail; otherwise orphans
+    # (degree 0) are surfaced but not fatal.
+    if underconnected:
+        if min_edges:
+            console.print(
+                f"  [yellow]under-connected ({len(underconnected)}, need >= {min_edges} "
+                f"edge(s)): {', '.join(underconnected)}[/yellow]"
+            )
+            fail = True
+        else:
+            console.print(f"  [dim]orphans ({len(underconnected)}): {', '.join(underconnected)}[/dim]")
+
+    # Cycles are reported; fatal only if you opt in (they can be normalized —
+    # topo condenses the strongly-connected part rather than crashing).
     if cycle:
-        console.print(f"  [red]cycle: {' -> '.join(cycle)}[/red]")
-        problems += 1
-    if not problems:
+        style = "red" if forbid_cycles else "dim"
+        console.print(f"  [{style}]cycle: {' -> '.join(cycle)}[/{style}]")
+        if forbid_cycles:
+            fail = True
+
+    if min_density is not None and g.density() < float(min_density):
+        console.print(f"  [yellow]edge density {g.density():.2f} < min_edge_density {min_density}[/yellow]")
+        fail = True
+
+    if not (dangling or underconnected or cycle):
         console.print("  [green]✓ connected, acyclic, no dangling edges[/green]")
 
     if topo:
@@ -82,24 +110,6 @@ def graph(template: Path, repo_path: Path, topo: bool, strict: bool):
         else:
             console.print(f"  topological order: {' -> '.join(order) if order else '(empty)'}")
 
-    # [graph] policy from .projected-source.toml (the configurable edge-density dial).
-    require_connected = bool(
-        cfg.get("graph", "require_edge_per_node", False) or cfg.get("graph", "require_connected", False)
-    )
-    forbid_cycles = bool(cfg.get("graph", "forbid_cycles", False))
-    min_density = cfg.get("graph", "min_edge_density", None)
-
-    policy_violated = bool(dangling)  # a dangling edge is always a defect
-    if require_connected and orphans:
-        policy_violated = True
-    if forbid_cycles and cycle:
-        policy_violated = True
-    if min_density is not None and g.density() < float(min_density):
-        console.print(
-            f"  [yellow]edge density {g.density():.2f} < min_edge_density {min_density}[/yellow]"
-        )
-        policy_violated = True
-
-    if strict and (problems or policy_violated):
+    if strict and fail:
         console.print("\n[red]✗ Graph check failed (--strict)[/red]")
         sys.exit(1)

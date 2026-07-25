@@ -3,6 +3,7 @@
 
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from projected_source.cli.graph import graph
@@ -71,11 +72,17 @@ def test_density():
 
 # ------------------------------------------------------------------ CLI
 
-def _write_tour(tmp_path, body):
-    tdir = tmp_path / "docs"
-    tdir.mkdir(exist_ok=True)
-    (tdir / "tour.md.j2").write_text(body)
-    return tdir / "tour.md.j2"
+def _write_tour(tmp_path, body, config=None):
+    (tmp_path / "docs").mkdir(exist_ok=True)
+    (tmp_path / "docs" / "tour.md.j2").write_text(body)
+    if config is not None:
+        (tmp_path / ".projected-source.toml").write_text(config)
+    return tmp_path / "docs" / "tour.md.j2"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))  # no developer user config
 
 
 def test_graph_command_clean_dag(tmp_path):
@@ -87,11 +94,31 @@ def test_graph_command_clean_dag(tmp_path):
     result = CliRunner().invoke(graph, ["-r", str(tmp_path), "--topo", "--strict", str(tour)])
     assert result.exit_code == 0, result.output
     assert "2 node(s), 1 edge(s)" in result.output
-    assert "connected, acyclic" in result.output
     assert "topological order: a -> b" in result.output
 
 
-def test_graph_command_strict_fails_on_orphan(tmp_path):
+def test_min_edges_per_node_dial(tmp_path):
+    """min_edges_per_node is a numeric dial: 1 = no orphans, 2 = richer links."""
+    body = (
+        '{% chunk id="a" %}{{ relate("a", "feeds", "b") }}{% endchunk %}\n'
+        '{% chunk id="b" %}b{% endchunk %}\n'
+        '{% chunk id="loner" %}alone{% endchunk %}\n'
+    )
+    # min=1 fails on the orphan
+    tour = _write_tour(tmp_path, body, config="[graph]\nmin_edges_per_node = 1\n")
+    r1 = CliRunner().invoke(graph, ["-r", str(tmp_path), "--strict", str(tour)])
+    assert r1.exit_code == 1
+    assert "under-connected" in r1.output and "loner" in r1.output
+
+    # min=2 also fails a/b (they have only one edge each)
+    tour2 = _write_tour(tmp_path, body, config="[graph]\nmin_edges_per_node = 2\n")
+    r2 = CliRunner().invoke(graph, ["-r", str(tmp_path), "--strict", str(tour2)])
+    assert r2.exit_code == 1
+    assert "need >= 2 edge(s)" in r2.output
+
+
+def test_orphan_is_informational_without_the_dial(tmp_path):
+    """No min_edges configured → an orphan is surfaced but not fatal."""
     tour = _write_tour(
         tmp_path,
         '{% chunk id="a" %}{{ relate("a", "feeds", "b") }}{% endchunk %}\n'
@@ -99,17 +126,32 @@ def test_graph_command_strict_fails_on_orphan(tmp_path):
         '{% chunk id="loner" %}alone{% endchunk %}\n',
     )
     result = CliRunner().invoke(graph, ["-r", str(tmp_path), "--strict", str(tour)])
-    assert result.exit_code == 1
+    assert result.exit_code == 0, result.output
     assert "orphans (1): loner" in result.output
 
 
-def test_graph_command_reports_cycle_and_dangling(tmp_path):
+def test_cycle_is_reported_but_not_fatal_by_default(tmp_path):
+    body = (
+        '{% chunk id="a" %}{{ relate("a", "x", "b") }}{% endchunk %}\n'
+        '{% chunk id="b" %}{{ relate("b", "x", "a") }}{% endchunk %}\n'
+    )
+    # default: cycle reported, --strict still passes
+    tour = _write_tour(tmp_path, body)
+    r1 = CliRunner().invoke(graph, ["-r", str(tmp_path), "--strict", str(tour)])
+    assert r1.exit_code == 0, r1.output
+    assert "cycle:" in r1.output
+
+    # opt in: forbid_cycles makes it fatal
+    tour2 = _write_tour(tmp_path, body, config="[graph]\nforbid_cycles = true\n")
+    r2 = CliRunner().invoke(graph, ["-r", str(tmp_path), "--strict", str(tour2)])
+    assert r2.exit_code == 1
+
+
+def test_dangling_edge_is_always_fatal(tmp_path):
     tour = _write_tour(
         tmp_path,
-        '{% chunk id="a" %}{{ relate("a", "x", "b") }}{% endchunk %}\n'
-        '{% chunk id="b" %}{{ relate("b", "x", "a") }}{{ relate("b", "x", "ghost") }}{% endchunk %}\n',
+        '{% chunk id="a" %}{{ relate("a", "x", "ghost") }}{% endchunk %}\n',
     )
     result = CliRunner().invoke(graph, ["-r", str(tmp_path), "--strict", str(tour)])
     assert result.exit_code == 1
-    assert "cycle:" in result.output
     assert "ghost (undeclared node)" in result.output
