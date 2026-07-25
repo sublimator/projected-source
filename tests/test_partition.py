@@ -109,3 +109,35 @@ def test_geometry_multi_region_claim():
     assert buckets["audit"] == 10               # 5 + 5
     assert records[0].regions == [(1, 5), (16, 20)]
     assert not cs.is_complete()                 # 6-15 still uncovered (would be narrated)
+
+
+def test_code_display_overlaps_detects_repeated_source():
+    from pathlib import Path
+
+    from projected_source.core.changes_set import ClaimRecord, code_display_overlaps
+
+    f = Path("x.cpp")
+    records = [
+        ClaimRecord("code", f, [(10, 50)], 1, 1),
+        ClaimRecord("code", f, [(30, 40)], 1, 0),          # inside the first → overlap
+        ClaimRecord("code", Path("y.cpp"), [(30, 40)], 0, 0),  # other file → no overlap
+        ClaimRecord("ignore", f, [(10, 50)], 0, 0),        # not a code() display → skipped
+    ]
+    overlaps = code_display_overlaps(records)
+    assert len(overlaps) == 1
+    later, earlier, span = overlaps[0]
+    assert span == (30, 40)
+    assert earlier.regions == [(10, 50)] and later.regions == [(30, 40)]
+
+
+def test_code_display_overlaps_none_when_disjoint():
+    from pathlib import Path
+
+    from projected_source.core.changes_set import ClaimRecord, code_display_overlaps
+
+    f = Path("x.cpp")
+    records = [
+        ClaimRecord("code", f, [(10, 20)], 1, 1),
+        ClaimRecord("code", f, [(21, 30)], 1, 1),
+    ]
+    assert code_display_overlaps(records) == []

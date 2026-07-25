@@ -62,6 +62,21 @@ def _comment_safe(value: str) -> str:
     )
 
 
+def _anchor_slug(chunk_id: str) -> str:
+    """A URL-fragment-safe slug for a chunk id, so `link()` and the emitted
+    anchor agree. Ids are already kebab-case in practice; this only guards ids
+    that carry spaces or punctuation. Case is preserved (fragments are
+    case-sensitive); the `chunk-` prefix keeps our anchors out of the way of a
+    document's own heading anchors."""
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "-", str(chunk_id)).strip("-")
+    return f"chunk-{slug}"
+
+
+def _chunk_anchor_html(chunk_id: str) -> str:
+    """A reader-invisible but linkable jump target placed at a chunk's start."""
+    return f'<a id="{_anchor_slug(chunk_id)}"></a>'
+
+
 @dataclass(frozen=True)
 class CodeError:
     """A code() extraction that failed during a render.
@@ -166,7 +181,10 @@ class ChunkExtension(Extension):
         if tags:
             tagstr = ",".join(str(t) for t in tags) if isinstance(tags, (list, tuple)) else str(tags)
             attrs += f' tags="{_comment_safe(tagstr)}"'
-        return f'<!-- chunk {attrs} -->\n{body}\n<!-- /chunk id="{_comment_safe(id)}" -->'
+        # Invisible comment for the graph + a linkable anchor so another chunk can
+        # link() here instead of repeating the code (DRY over duplication).
+        anchor = _chunk_anchor_html(id)
+        return f'<!-- chunk {attrs} -->\n{anchor}\n{body}\n<!-- /chunk id="{_comment_safe(id)}" -->'
 
 
 def _collect_error_fixture(file_path: Path, error: str, template_context: str = None):
@@ -232,6 +250,7 @@ class TemplateRenderer:
         self.env.globals["ignore_changes"] = self._ignore_changes_function
         self.env.globals["audit"] = self._audit_function
         self.env.globals["relate"] = self._relate_function
+        self.env.globals["link"] = self._link_function
         self.env.globals["include"] = self._include_function
         self.env.globals["include_body"] = self._include_body_function
         self.env.globals["set_code_context"] = self._set_code_context_function
@@ -701,13 +720,14 @@ class TemplateRenderer:
             # Build final output
             block = f"{header}\n```{language}\n{code_text}\n```"
             if id:
-                # A reader-invisible anchor so the chunk is addressable as a
-                # graph node (the id seed; edges/validation grow later).
+                # A reader-invisible comment so the chunk is addressable as a
+                # graph node, plus a linkable anchor so another chunk can link()
+                # here instead of repeating the extract (DRY over duplication).
                 anchor = self._comment_attr("id", id)
                 tagstr = self._format_tags(tags)
                 if tagstr:
                     anchor += " " + self._comment_attr("tags", tagstr)
-                block = f"<!-- chunk {anchor} -->\n{block}"
+                block = f"<!-- chunk {anchor} -->\n{_chunk_anchor_html(id)}\n{block}"
             return block
 
         except Exception as e:
@@ -941,6 +961,19 @@ class TemplateRenderer:
         if label:
             parts.append(self._comment_attr("label", label))
         return f"<!-- edge {' '.join(parts)} -->"
+
+    def _link_function(self, target: str, text: str = None) -> str:
+        """Render an intra-document link to another chunk's anchor.
+
+        `link('app-owner')` → `[app-owner](#chunk-app-owner)`, resolving to the
+        `<a id="chunk-app-owner">` emitted at that chunk. This is the DRY move: a
+        second place that needs an already-shown extract points at it instead of
+        repeating the code. Authoring stays expressive — the `graph` command's
+        lint pass is what flags a link whose target chunk does not exist (a
+        dangling link), the same way it flags a dangling edge.
+        """
+        label = text if text is not None else str(target)
+        return f"[{label}](#{_anchor_slug(target)})"
 
     def _safe_repo_rel(self, path: Path) -> str:
         """repo-root-relative POSIX path, or the raw path if outside the repo."""

@@ -106,6 +106,42 @@ def _count_in_intervals(intervals: List[Tuple[int, int]], start: int, end: int) 
     return total
 
 
+def _first_region_overlap(
+    a_regions: List[Tuple[int, int]], b_regions: List[Tuple[int, int]]
+) -> Optional[Tuple[int, int]]:
+    """First overlapping [lo, hi] between two region lists, or None."""
+    for a_s, a_e in a_regions:
+        for b_s, b_e in b_regions:
+            lo, hi = max(a_s, b_s), min(a_e, b_e)
+            if lo <= hi:
+                return (lo, hi)
+    return None
+
+
+def code_display_overlaps(
+    records: List["ClaimRecord"],
+) -> List[Tuple["ClaimRecord", "ClaimRecord", Tuple[int, int]]]:
+    """code() extracts that render overlapping source lines — the same lines
+    shown to the reader more than once (a DRY smell worth linting), independent
+    of what changed. Returns (later, earlier, overlap) per pair; `earlier` is the
+    template-order-earlier extract, so the message can say "already shown above".
+
+    This is distinct from the shadowed-claim report, which is about *changed*
+    lines being double-claimed; two extracts can overlap on unchanged context and
+    be invisible to that report while still duplicating what the reader sees.
+    """
+    code = [r for r in records if r.bucket == "code"]
+    out: List[Tuple["ClaimRecord", "ClaimRecord", Tuple[int, int]]] = []
+    for i, later in enumerate(code):
+        for earlier in code[:i]:
+            if earlier.file_path != later.file_path:
+                continue
+            overlap = _first_region_overlap(earlier.regions, later.regions)
+            if overlap is not None:
+                out.append((later, earlier, overlap))
+    return out
+
+
 def _subtract_interval(
     intervals: List[Tuple[int, int]], start: int, end: int
 ) -> List[Tuple[int, int]]:

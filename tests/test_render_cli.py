@@ -865,3 +865,21 @@ def test_min_density_span_floor_exempts_small_extracts(tmp_path, monkeypatch):
     assert "file.cpp:1-33 (3%)" in out  # the large mostly-unchanged extract is flagged
     # the tiny small() extract (span 4 < 10) must NOT appear as a dump
     assert "(25%)" not in out, out
+
+
+def test_link_renders_intra_doc_anchor_and_chunk_emits_target(tmp_path):
+    """link('id') renders a markdown anchor link; the chunk emits the matching
+    <a id="chunk-id"> jump target."""
+    tpl = tmp_path / "t.md.j2"
+    tpl.write_text(
+        '{% chunk id="app-owner" %}the owner{% endchunk %}\n'
+        'See {{ link("app-owner") }} and {{ link("app-owner", "the cache owner") }}.\n'
+    )
+    result = CliRunner().invoke(
+        cli, ["render", str(tpl), str(tmp_path / "out.md"), "-r", str(tmp_path), "--no-header"]
+    )
+    assert result.exit_code == 0, result.output
+    out = (tmp_path / "out.md").read_text()
+    assert '<a id="chunk-app-owner"></a>' in out
+    assert "[app-owner](#chunk-app-owner)" in out
+    assert "[the cache owner](#chunk-app-owner)" in out

@@ -61,6 +61,78 @@ def test_document_order_survives_tag_slice():
     assert g.subgraph(g.nodes_with_tag("t")).document_order == ["a", "b"]
 
 
+def test_document_order_uses_earliest_offset_across_anchor_kinds():
+    """Regression: an id whose first appearance is an audit anchor but which is
+    also a later chunk anchor must keep the audit (earlier) position."""
+    doc = (
+        '<!-- audit file="f" lines="1" id="x" reason="r" -->'
+        '<!-- chunk id="y" -->'
+        '<!-- chunk id="x" -->'
+    )
+    assert extract_graph(doc).document_order == ["x", "y"]
+
+
+# ------------------------------------------------------------------ links
+
+def test_dangling_link_detected():
+    doc = '<!-- chunk id="a" -->see [b](#chunk-b) and [ghost](#chunk-ghost)'
+    assert extract_graph(doc).dangling_links() == ["chunk-b", "chunk-ghost"]
+
+
+def test_link_to_existing_chunk_is_not_dangling():
+    doc = '<!-- chunk id="app-owner" -->x [see it](#chunk-app-owner)'
+    assert extract_graph(doc).dangling_links() == []
+
+
+def test_graph_slug_matches_renderer_anchor_slug():
+    """The dangling-link lint compares link() targets to renderer anchors; the
+    two slug functions must not drift."""
+    from projected_source.core.graph import _slug
+    from projected_source.core.renderer import _anchor_slug
+    for s in ["app-owner", "a b c", "weird/id!", "x", "Mixed_Case-1"]:
+        assert _slug(s) == _anchor_slug(s)
+
+
+def test_graph_command_flags_dangling_link(tmp_path):
+    tour = _write_tour(
+        tmp_path,
+        '{% chunk id="a" %}see {{ link("ghost") }}{{ relate("a","x","a") }}{% endchunk %}\n',
+    )
+    result = CliRunner().invoke(graph, ["-r", str(tmp_path), "--strict", str(tour)])
+    assert result.exit_code == 1
+    assert "dangling links" in result.output and "chunk-ghost" in result.output
+
+
+# ------------------------------------------------------------------ cold-review fixes
+
+def test_graph_command_escapes_markup_in_tag_and_does_not_crash(tmp_path):
+    """Author data (ids/tags) with Rich-markup metacharacters must be escaped —
+    not crash the command, not silently vanish."""
+    tour = _write_tour(
+        tmp_path,
+        '{% chunk id="a" tags=["[wip]"] %}{{ relate("a","x","b") }}{% endchunk %}\n'
+        '{% chunk id="b" %}b{% endchunk %}\n',
+    )
+    result = CliRunner().invoke(graph, ["-r", str(tmp_path), str(tour)])
+    assert result.exit_code == 0, result.output
+    assert result.exception is None
+    assert "[wip]" in result.output  # preserved, not swallowed
+
+
+def test_no_green_allclear_when_density_below_min(tmp_path):
+    """Regression: the green all-clear must not print when min_edge_density fails."""
+    tour = _write_tour(
+        tmp_path,
+        '{% chunk id="a" %}{{ relate("a","x","b") }}{% endchunk %}\n'
+        '{% chunk id="b" %}b{% endchunk %}\n',
+        config="[graph]\nmin_edge_density = 5.0\n",
+    )
+    result = CliRunner().invoke(graph, ["-r", str(tmp_path), "--strict", str(tour)])
+    assert result.exit_code == 1
+    assert "edge density" in result.output
+    assert "connected, acyclic" not in result.output
+
+
 def test_graph_command_prints_document_order(tmp_path):
     tour = _write_tour(
         tmp_path,

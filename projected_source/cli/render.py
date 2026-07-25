@@ -17,7 +17,7 @@ import click
 from rich.markup import escape
 from watchfiles import DefaultFilter, watch
 
-from ..core.changes_set import ChangesSet
+from ..core.changes_set import ChangesSet, code_display_overlaps
 from ..core.config import load_config
 from ..core.review_scope import ReviewScopeError, extract_review_scope, read_template_scope
 from ..core.html import default_html_output, markdown_to_html
@@ -636,6 +636,21 @@ def _report_validation(
             return p.relative_to(effective_repo_path)
         except ValueError:
             return p
+
+    # Overlap lint: two code() extracts that render the same source lines. Unlike
+    # the shadowed report (changed-line double-claim), this catches duplication on
+    # unchanged context too — the "shown twice, link() it instead" DRY smell.
+    overlaps = code_display_overlaps(records)
+    if overlaps:
+        console.print(
+            f"  [yellow]{len(overlaps)} code() overlap(s) — same source shown more than once "
+            f"(consider link() to the first):[/yellow]"
+        )
+        for later, earlier, (lo, hi) in overlaps:
+            console.print(
+                f"    [yellow]{escape(str(_rel(later.file_path)))}:{_claim_spans(later.regions)} "
+                f"repeats lines {lo}-{hi} (already in :{_claim_spans(earlier.regions)})[/yellow]"
+            )
 
     if cfg.max_audit_ratio is not None and total:
         ratio = buckets["audit"] / total
