@@ -635,6 +635,13 @@ class TemplateRenderer:
                     "macro_definition, lines, or marker"
                 )
 
+            # tree-sitter end coordinates land on the next row when a node
+            # consumes its trailing newline (preproc_def and friends), so a
+            # node-query extraction can claim one line past its content.
+            # Clamp to the text so the header, permalink, and coverage all
+            # describe only lines the block actually renders.
+            end_line = self._clamp_end_to_text(code_text, start_line, end_line)
+
             # Use original file path for display (not temp file)
             display_path = self.repo_path / file_path if not Path(file_path).is_absolute() else Path(file_path)
 
@@ -905,26 +912,31 @@ class TemplateRenderer:
         Shared by ignore_changes() and audit(); mirrors the dispatch in
         _code_function so the three verbs agree on what a selector points at.
         """
+        # Node-query branches keep their text so the end coordinate can be
+        # clamped to real content (_clamp_end_to_text) — tree-sitter nodes
+        # that consume their trailing newline otherwise claim one line past
+        # what they contain. Marker and lines= spans are line-arithmetic.
+        text: Optional[str] = None
         if function:
-            _, start_line, end_line = extractor.extract_function(extract_path, function, signature)
+            text, start_line, end_line = extractor.extract_function(extract_path, function, signature)
         elif function_macro:
             macro_spec = {"name": function_macro} if isinstance(function_macro, str) else function_macro
-            _, start_line, end_line = extractor.extract_function_macro(extract_path, macro_spec)
+            text, start_line, end_line = extractor.extract_function_macro(extract_path, macro_spec)
         elif macro_definition:
-            _, start_line, end_line = extractor.extract_macro_definition(extract_path, macro_definition)
+            text, start_line, end_line = extractor.extract_macro_definition(extract_path, macro_definition)
         elif var:
             if hasattr(extractor, "extract_variable"):
-                _, start_line, end_line = extractor.extract_variable(extract_path, var)
+                text, start_line, end_line = extractor.extract_variable(extract_path, var)
             else:
-                _, start_line, end_line = extractor.extract_struct(extract_path, var)
+                text, start_line, end_line = extractor.extract_struct(extract_path, var)
         elif struct:
-            _, start_line, end_line = extractor.extract_struct(extract_path, struct)
+            text, start_line, end_line = extractor.extract_struct(extract_path, struct)
         elif message:
-            _, start_line, end_line = extractor.extract_message(extract_path, message)
+            text, start_line, end_line = extractor.extract_message(extract_path, message)
         elif enum:
-            _, start_line, end_line = extractor.extract_enum(extract_path, enum)
+            text, start_line, end_line = extractor.extract_enum(extract_path, enum)
         elif service:
-            _, start_line, end_line = extractor.extract_service(extract_path, service)
+            text, start_line, end_line = extractor.extract_service(extract_path, service)
         elif marker:
             _, start_line, end_line = extractor.extract_marker(extract_path, marker)
             start_line, end_line = self._widen_to_marker_delimiters(extract_path, start_line, end_line)
@@ -932,6 +944,8 @@ class TemplateRenderer:
             start_line, end_line = lines
         else:
             raise ValueError("no extraction selector")
+        if text is not None:
+            end_line = self._clamp_end_to_text(text, start_line, end_line)
         return start_line, end_line
 
     @staticmethod
@@ -1505,6 +1519,17 @@ class TemplateRenderer:
         except Exception as e:
             logger.error(f"Error loading custom tags from {custom_file}: {e}")
             # Don't crash - just continue without custom tags
+
+    @staticmethod
+    def _clamp_end_to_text(code_text: str, start_line: int, end_line: int) -> int:
+        """Bound an extraction's end line by the text it actually produced.
+
+        Node-boundary coordinates overshoot by one when the node consumes
+        its trailing newline; the extracted text is the ground truth.
+        """
+        if not code_text:
+            return end_line
+        return min(end_line, start_line + len(code_text.splitlines()) - 1)
 
     def _widen_to_marker_delimiters(self, source_path: Path, start_line: int, end_line: int) -> Tuple[int, int]:
         """Extend a marker body range over its //@@start and //@@end lines.

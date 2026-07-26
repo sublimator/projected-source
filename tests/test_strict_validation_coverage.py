@@ -500,3 +500,97 @@ class TestMarkerBoundedCarving:
             "f.cpp", function="bigFunc", from_marker="core", to_marker="core", github=False
         )
         assert "❌" in out and "empty" in out.lower()
+
+
+class TestNodeEndOvershoot:
+    """tree-sitter nodes that consume their trailing newline (preproc_def
+    and friends) land end_point on the next row. The citation header, the
+    permalink range, and coverage must all be bounded by the extracted
+    text — never claiming a line the block does not render."""
+
+    def _repo_with_adjacent_macros(self, repo):
+        source = repo / "macros.c"
+        source.write_text(
+            "#define ASSERT(x) if (!(x)) return 1\n"
+            "#define NOPE(x) do {} while(0)\n"
+        )
+        _commit_all(repo, "base")
+        source.write_text(
+            "#define ASSERT(x) if (!(x)) return 2\n"
+            "#define NOPE(x) do { int y; } while(0)\n"
+        )
+        _commit_all(repo, "change both macros")
+
+    def test_header_does_not_claim_next_line(self, repo, tmp_path):
+        self._repo_with_adjacent_macros(repo)
+        changes = ChangesSet.from_diff(base="HEAD~1", repo_path=repo)
+
+        text = _render(
+            repo,
+            tmp_path,
+            "{{ code('macros.c', macro_definition='ASSERT', github=False) }}\n",
+            changes,
+        )
+
+        assert "`macros.c:1`" in text
+        assert "macros.c:1-2" not in text
+
+    def test_coverage_does_not_mask_neighboring_change(self, repo, tmp_path):
+        """Documenting the line-1 macro must not consume line 2's
+        obligation (the next macro, changed but undocumented)."""
+        self._repo_with_adjacent_macros(repo)
+        changes = ChangesSet.from_diff(base="HEAD~1", repo_path=repo)
+        assert _uncovered_ranges(changes) == [(1, 2)]
+
+        _render(
+            repo,
+            tmp_path,
+            "{{ code('macros.c', macro_definition='ASSERT', github=False) }}\n",
+            changes,
+        )
+        assert _uncovered_ranges(changes) == [(2, 2)]
+
+    def test_ignore_changes_does_not_mask_neighboring_change(self, repo, tmp_path):
+        self._repo_with_adjacent_macros(repo)
+        changes = ChangesSet.from_diff(base="HEAD~1", repo_path=repo)
+
+        _render(
+            repo,
+            tmp_path,
+            "{{ ignore_changes('macros.c', macro_definition='ASSERT') }}\n",
+            changes,
+        )
+        assert _uncovered_ranges(changes) == [(2, 2)]
+
+    def test_header_end_matches_last_rendered_line(self, repo, tmp_path):
+        """The issue's detector, as an invariant: every numbered block's
+        last line number equals its header's end."""
+        import re as _re
+
+        self._repo_with_adjacent_macros(repo)
+        changes = ChangesSet.from_diff(base="HEAD~1", repo_path=repo)
+        text = _render(
+            repo,
+            tmp_path,
+            "{{ code('macros.c', macro_definition='ASSERT', github=False) }}\n"
+            "{{ code('macros.c', macro_definition='NOPE', github=False) }}\n",
+            changes,
+        )
+
+        lines = text.splitlines()
+        checked = 0
+        for i, ln in enumerate(lines):
+            m = _re.match(r"📍 `([^`]+):(\d+)(?:-(\d+))?`", ln)
+            if not m or i + 1 >= len(lines) or not lines[i + 1].startswith("```"):
+                continue
+            end = int(m.group(3) or m.group(2))
+            j, nums = i + 2, []
+            while j < len(lines) and not lines[j].startswith("```"):
+                mm = _re.match(r"\s*(\d+)(\s|$)", lines[j])
+                if mm:
+                    nums.append(int(mm.group(1)))
+                j += 1
+            assert nums, f"no numbered lines under: {ln}"
+            assert max(nums) == end, f"{ln} block ends at {max(nums)}"
+            checked += 1
+        assert checked == 2
